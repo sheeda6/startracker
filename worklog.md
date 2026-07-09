@@ -552,3 +552,57 @@ Unresolved/Minor:
 - The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
 - VLM couldn't see fine star rendering details at screenshot resolution (954×258 canvas); effects are visible at full size.
 - Could add touch support for mobile drag-to-rotate.
+
+---
+Task ID: cron-review-6
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 6)
+Task: QA testing, mobile touch support, welcome overlay, constellation mythology.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 5 — app had improved star rendering, compass control, drag-to-rotate.
+- Tested with agent-browser: console clean, layout healthy (header 167px, sky map 260px), all interactions work.
+- VLM rated 8/10. Suggestions: "interactive tutorials for new users" and "mobile responsiveness."
+- No critical bugs found.
+
+**New Features:**
+1. **Mobile touch support** (SkyMap):
+   - Single-finger touch drag rotates the sky map (same as mouse drag).
+   - Two-finger pinch zooms in/out (distance-based, 0.6×–4× range).
+   - Added `touch-none` CSS class to prevent browser gesture interference.
+   - `touchRef` tracks touch mode ("none" | "rotate" | "pinch") and last position/distance.
+   - `onTouchStart`/`onTouchMove`/`onTouchEnd` handlers on canvas.
+
+2. **Welcome onboarding overlay** (WelcomeOverlay.tsx):
+   - Shows on first visit (localStorage flag `startracker-welcome-seen`).
+   - Features grid showcasing 8 key features: Interactive Sky Map, Search & Filter, Time Controls, Observer Location, Solar System, Angular Measurement, Meteor Showers, Night Mode.
+   - Each feature has an icon, title, and description.
+   - Gradient header with Telescope logo and animated pulse dot.
+   - Keyboard shortcuts hint at the bottom.
+   - "Start Exploring" button dismisses the overlay and sets localStorage.
+   - "Show welcome guide" button in the shortcuts dialog re-opens it (clears localStorage + reload).
+   - Used lazy `useState` initializer to avoid `setState` in effect (lint-clean).
+
+3. **Constellation mythology panel** (constellationMythology.ts + StarDetails):
+   - New data file with mythology, best viewing month, bright star count, and notable deep-sky objects for 20 major constellations (UMa, UMi, Ori, Cas, Lyr, Cyg, Leo, Sco, Tau, CMa, Boo, Peg, And, Per, Aur, Gem, Vir, Sgr, Aql, Cru, Cen).
+   - StarDetails panel now shows a "Constellation:" section (sky-blue tinted box) when the selected star's constellation has mythology.
+   - Section includes: constellation name, best viewing month badge, mythological story, bright star count, and notable objects.
+   - Verified: Arcturus (Boötes) shows "Boötes represents a herdsman or plowman..." with June as best month.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: welcome overlay appears on first visit and dismisses correctly, constellation mythology shows in details panel (verified via DOM text extraction), touch handlers added to canvas.
+- Console: clean.
+- VLM: 8/10 overall.
+
+Stage Summary:
+- Added 3 new features: mobile touch support (drag-to-rotate + pinch-to-zoom), welcome onboarding overlay, constellation mythology panel.
+- App is now mobile-friendly with touch gestures and has a first-visit tutorial.
+- Constellation mythology adds educational/cultural value to the star details.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- Constellation mythology only available for 20 major constellations; could be expanded.
+- VLM couldn't see the mythology section in screenshots because it requires scrolling down in the details panel — the content IS present (verified via DOM).
+- Could add ISS/satellite tracking in future rounds.

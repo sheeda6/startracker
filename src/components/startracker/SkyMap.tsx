@@ -635,6 +635,44 @@ export function SkyMap() {
     [view.zoom, setView]
   );
 
+  // Touch support for mobile: single-finger drag to rotate, pinch to zoom
+  const touchRef = useRef<{ mode: "none" | "rotate" | "pinch"; lastX: number; lastDist: number }>({ mode: "none", lastX: 0, lastDist: 0 });
+
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent<HTMLCanvasElement>) => {
+      if (e.touches.length === 1) {
+        touchRef.current = { mode: "rotate", lastX: e.touches[0].clientX, lastDist: 0 };
+      } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchRef.current = { mode: "pinch", lastX: 0, lastDist: Math.hypot(dx, dy) };
+      }
+    },
+    []
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent<HTMLCanvasElement>) => {
+      if (touchRef.current.mode === "rotate" && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - touchRef.current.lastX;
+        setView({ rotation: useStarTracker.getState().view.rotation + dx * 0.005 });
+        touchRef.current.lastX = e.touches[0].clientX;
+      } else if (touchRef.current.mode === "pinch" && e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const delta = (dist - touchRef.current.lastDist) * 0.005;
+        setView({ zoom: Math.max(0.6, Math.min(4, useStarTracker.getState().view.zoom + delta)) });
+        touchRef.current.lastDist = dist;
+      }
+    },
+    [setView]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchRef.current = { mode: "none", lastX: 0, lastDist: 0 };
+  }, []);
+
   const handleExport = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -650,14 +688,17 @@ export function SkyMap() {
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-lg">
       <canvas
         ref={canvasRef}
-        className="block h-full w-full cursor-grab"
+        className="block h-full w-full cursor-grab touch-none"
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => { setHoveredHip(null); dragRef.current.active = false; }}
         onClick={handleClick}
         onWheel={handleWheel}
-        aria-label="Interactive sky map. Click a star to view details. Drag to rotate."
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        aria-label="Interactive sky map. Click a star to view details. Drag to rotate. Pinch to zoom."
       />
       {/* Export button */}
       <button

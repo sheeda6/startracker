@@ -20,6 +20,7 @@ import { useStarTracker } from "@/lib/store";
 import { STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
 import { constellationName } from "@/data/constellations";
 import { getStarProperties } from "@/data/starProperties";
+import { getConstellationMythology } from "@/data/constellationMythology";
 import { buildFrame, transformStar, refract } from "@/lib/astro/engine";
 import { computeRiseTransitSet } from "@/lib/astro/riseSet";
 import {
@@ -33,7 +34,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { X, Star as StarIcon, Compass, Globe2, Clock, Activity } from "lucide-react";
+import { X, Star as StarIcon, Compass, Globe2, Clock, Activity, Sparkles } from "lucide-react";
 
 export function StarDetails() {
   const selectedHip = useStarTracker((s) => s.selectedHip);
@@ -247,6 +248,38 @@ export function StarDetails() {
                   {props.notes}
                 </div>
               )}
+            </>
+          );
+        })()}
+
+        {/* Constellation mythology */}
+        {(() => {
+          const myth = getConstellationMythology(star.constellation);
+          if (!myth) return null;
+          return (
+            <>
+              <SectionTitle icon={<Sparkles className="h-3.5 w-3.5" />} title="Constellation: " />
+              <div className="mb-3 rounded-md border border-sky-400/20 bg-sky-400/[0.05] p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-sm font-semibold text-sky-200">{constellationName(star.constellation)}</span>
+                  <Badge variant="outline" className="border-sky-400/30 bg-sky-400/10 text-[10px] text-sky-300">
+                    {myth.bestMonth}
+                  </Badge>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-300">
+                  {myth.mythology}
+                </p>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  <div className="rounded border border-white/5 bg-white/[0.02] px-2 py-1">
+                    <div className="text-[9px] uppercase text-slate-500">Bright stars</div>
+                    <div className="font-mono text-xs text-slate-200">{myth.brightStars}</div>
+                  </div>
+                  <div className="rounded border border-white/5 bg-white/[0.02] px-2 py-1">
+                    <div className="text-[9px] uppercase text-slate-500">Notable objects</div>
+                    <div className="text-[10px] text-slate-300">{myth.notableObjects}</div>
+                  </div>
+                </div>
+              </div>
             </>
           );
         })()}

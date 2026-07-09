@@ -444,6 +444,14 @@ export default function Home() {
                 </div>
               ))}
             </div>
+            {/* Show welcome button */}
+            <button
+              onClick={() => { try { localStorage.removeItem("startracker-welcome-seen"); } catch {} window.location.reload(); }}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.02] py-2 text-xs text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
+            >
+              <Telescope className="h-3.5 w-3.5" />
+              Show welcome guide
+            </button>
           </div>
         </div>
       )}
