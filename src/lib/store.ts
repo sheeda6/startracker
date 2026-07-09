@@ -93,6 +93,15 @@ interface StarTrackerState {
   nightMode: boolean;
   setNightMode: (b: boolean) => void;
 
+  // Measurement tool (angular distance between two stars)
+  measureMode: boolean;
+  measureStart: number | null;  // HIP of first star
+  measureEnd: number | null;    // HIP of second star
+  setMeasureMode: (b: boolean) => void;
+  setMeasureStart: (h: number | null) => void;
+  setMeasureEnd: (h: number | null) => void;
+  clearMeasure: () => void;
+
   // UI
   rightPanelOpen: boolean;
   bottomPanelOpen: boolean;
@@ -192,6 +201,14 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
 
   nightMode: false,
   setNightMode: (b) => set({ nightMode: b }),
+
+  measureMode: false,
+  measureStart: null,
+  measureEnd: null,
+  setMeasureMode: (b) => set((s) => ({ measureMode: b, measureStart: b ? s.measureStart : null, measureEnd: b ? s.measureEnd : null })),
+  setMeasureStart: (h) => set({ measureStart: h }),
+  setMeasureEnd: (h) => set({ measureEnd: h }),
+  clearMeasure: () => set({ measureStart: null, measureEnd: null }),
 
   rightPanelOpen: true,
   bottomPanelOpen: true,

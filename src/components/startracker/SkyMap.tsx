@@ -70,6 +70,11 @@ export function SkyMap() {
   const setHoveredHip = useStarTracker((s) => s.setHoveredHip);
   const tickTime = useStarTracker((s) => s.tickTime);
   const setView = useStarTracker((s) => s.setView);
+  const measureMode = useStarTracker((s) => s.measureMode);
+  const measureStart = useStarTracker((s) => s.measureStart);
+  const measureEnd = useStarTracker((s) => s.measureEnd);
+  const setMeasureStart = useStarTracker((s) => s.setMeasureStart);
+  const setMeasureEnd = useStarTracker((s) => s.setMeasureEnd);
 
   // Precomputed frame (memoized per time/observer)
   const frame: FrameContext = useMemo(
@@ -392,6 +397,76 @@ export function SkyMap() {
       }
     }
 
+    // 11b. Measurement line
+    if (measureMode && measureStart != null) {
+      const startRs = renderedStars.find((s) => s.star.hip === measureStart);
+      const endRs = measureEnd != null ? renderedStars.find((s) => s.star.hip === measureEnd) : null;
+      if (startRs) {
+        // Draw start marker (pulsing cyan ring)
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.9)";
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.setLineDash([3 * dpr, 3 * dpr]);
+        ctx.beginPath();
+        ctx.arc(startRs.x, startRs.y, startRs.r + 8 * dpr, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (endRs) {
+          // Draw line between the two stars
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.7)";
+          ctx.lineWidth = 1.2 * dpr;
+          ctx.setLineDash([4 * dpr, 3 * dpr]);
+          ctx.beginPath();
+          ctx.moveTo(startRs.x, startRs.y);
+          ctx.lineTo(endRs.x, endRs.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Draw end marker
+          ctx.beginPath();
+          ctx.arc(endRs.x, endRs.y, endRs.r + 8 * dpr, 0, 2 * Math.PI);
+          ctx.stroke();
+
+          // Draw angle label at midpoint
+          const mx = (startRs.x + endRs.x) / 2;
+          const my = (startRs.y + endRs.y) / 2;
+          // Compute angular separation
+          const s1 = STARS_BY_HIP.get(measureStart);
+          const s2 = STARS_BY_HIP.get(measureEnd!);
+          if (s1 && s2) {
+            const cosSep = Math.sin(s1.dec) * Math.sin(s2.dec) + Math.cos(s1.dec) * Math.cos(s2.dec) * Math.cos(s1.ra - s2.ra);
+            const sepDeg = Math.acos(Math.max(-1, Math.min(1, cosSep))) * 180 / Math.PI;
+            const label = sepDeg < 1 ? `${(sepDeg * 60).toFixed(1)}′` : `${sepDeg.toFixed(2)}°`;
+            // Label background
+            ctx.font = `bold ${11 * dpr}px ui-monospace, monospace`;
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = "rgba(2, 6, 23, 0.9)";
+            ctx.fillRect(mx - tw / 2 - 4 * dpr, my - 8 * dpr, tw + 8 * dpr, 16 * dpr);
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
+            ctx.lineWidth = 0.5 * dpr;
+            ctx.strokeRect(mx - tw / 2 - 4 * dpr, my - 8 * dpr, tw + 8 * dpr, 16 * dpr);
+            ctx.fillStyle = "#7dd3fc";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, mx, my);
+          }
+        } else if (hoveredHip != null && hoveredHip !== measureStart) {
+          // Draw preview line to hovered star
+          const hoverRs = renderedStars.find((s) => s.star.hip === hoveredHip);
+          if (hoverRs) {
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+            ctx.lineWidth = 1 * dpr;
+            ctx.setLineDash([3 * dpr, 4 * dpr]);
+            ctx.beginPath();
+            ctx.moveTo(startRs.x, startRs.y);
+            ctx.lineTo(hoverRs.x, hoverRs.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      }
+    }
+
     // 12. Cardinal directions
     if (layers.cardinalDirections) {
       drawCardinalDirections(ctx, cx, cy, radius, view.rotation, dpr);
@@ -410,7 +485,7 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
-  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime]);
+  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime, measureMode, measureStart, measureEnd]);
 
   // Sync the latest render closure into the ref (inside an effect, not during render).
   useEffect(() => {
@@ -471,13 +546,22 @@ export function SkyMap() {
         }
       }
       if (best) {
-        setSelectedHip(best.star.hip);
+        if (measureMode) {
+          // In measure mode: first click sets start, second sets end
+          if (measureStart == null) {
+            setMeasureStart(best.star.hip);
+          } else if (measureStart !== best.star.hip) {
+            setMeasureEnd(best.star.hip);
+          }
+        } else {
+          setSelectedHip(best.star.hip);
+        }
       } else {
-        // If clicking empty sky, deselect
-        setSelectedHip(null);
+        // If clicking empty sky, deselect (only in normal mode)
+        if (!measureMode) setSelectedHip(null);
       }
     },
-    [setSelectedHip]
+    [setSelectedHip, measureMode, measureStart, setMeasureStart, setMeasureEnd]
   );
 
   const handleWheel = useCallback(

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useStarTracker } from "@/lib/store";
 import { STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
 import { constellationName } from "@/data/constellations";
+import { getStarProperties } from "@/data/starProperties";
 import { buildFrame, transformStar, refract } from "@/lib/astro/engine";
 import { computeRiseTransitSet } from "@/lib/astro/riseSet";
 import {
@@ -219,6 +220,36 @@ export function StarDetails() {
           ["Proper motion RA", `${star.pmRa.toFixed(2)} mas/yr`],
           ["Proper motion Dec", `${star.pmDec.toFixed(2)} mas/yr`],
         ]} />
+
+        {/* Physical properties */}
+        {(() => {
+          const props = getStarProperties(star.hip);
+          if (!props) return null;
+          return (
+            <>
+              <SectionTitle icon={<Activity className="h-3.5 w-3.5" />} title="Physical properties" />
+              <div className="mb-1 grid grid-cols-2 gap-1.5">
+                <StatBox label="Temperature" value={`${props.temperatureK.toLocaleString()} K`} />
+                <StatBox label="Mass" value={`${props.massSolar} M☉`} />
+                <StatBox label="Radius" value={`${props.radiusSolar.toLocaleString()} R☉`} />
+                <StatBox label="Luminosity" value={`${props.luminositySolar.toLocaleString()} L☉`} />
+                <StatBox label="Age" value={props.ageMyr > 0 ? `${props.ageMyr.toLocaleString()} Myr` : "—"} />
+                <StatBox label="Rotation" value={props.rotationKmh > 0 ? `${props.rotationKmh} km/s` : "—"} />
+              </div>
+              {props.varType && (
+                <div className="mb-2 rounded-md border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-xs">
+                  <span className="text-slate-400">Variability: </span>
+                  <span className="text-sky-300">{props.varType}</span>
+                </div>
+              )}
+              {props.notes && (
+                <div className="mb-3 rounded-md border border-amber-400/20 bg-amber-400/[0.05] px-2.5 py-2 text-[11px] leading-relaxed text-amber-100/90">
+                  {props.notes}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Altitude graph */}
         <SectionTitle icon={<Activity className="h-3.5 w-3.5" />} title="24-hour altitude curve" />

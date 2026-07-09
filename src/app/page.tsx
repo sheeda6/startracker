@@ -32,6 +32,8 @@ import { SkySummaryPanel } from "@/components/startracker/SkySummaryPanel";
 import { ConstellationBrowser } from "@/components/startracker/ConstellationBrowser";
 import { MagnitudeFilter } from "@/components/startracker/MagnitudeFilter";
 import { SkyTour } from "@/components/startracker/SkyTour";
+import { MeasureOverlay } from "@/components/startracker/MeasureOverlay";
+import { ObservingConditions } from "@/components/startracker/ObservingConditions";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +63,7 @@ import {
   Sparkles,
   Keyboard,
   MoonStar,
+  Ruler,
 } from "lucide-react";
 
 export default function Home() {
@@ -77,6 +80,8 @@ export default function Home() {
   const resetToNow = useStarTracker((s) => s.resetToNow);
   const nightMode = useStarTracker((s) => s.nightMode);
   const setNightMode = useStarTracker((s) => s.setNightMode);
+  const measureMode = useStarTracker((s) => s.measureMode);
+  const setMeasureMode = useStarTracker((s) => s.setMeasureMode);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   // Keyboard shortcuts
@@ -153,6 +158,28 @@ export default function Home() {
           <MagnitudeFilter />
 
           <div className="flex-1" />
+
+          {/* Observing conditions */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+              >
+                <Telescope className="mr-1.5 h-3.5 w-3.5" />
+                <span className="hidden lg:inline">Observing</span>
+                <span className="lg:hidden">Obs</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-80 border-white/10 bg-slate-950/95 p-0 text-slate-200 backdrop-blur-md"
+              align="end"
+              sideOffset={6}
+            >
+              <ObservingConditions />
+            </PopoverContent>
+          </Popover>
 
           {/* Settings popovers */}
           <Popover>
@@ -261,6 +288,18 @@ export default function Home() {
           <Button
             variant="ghost"
             size="icon"
+            className={`h-8 w-8 hover:bg-white/10 ${
+              measureMode ? "bg-sky-500/20 text-sky-300 hover:text-sky-200" : "text-slate-400 hover:text-slate-100"
+            }`}
+            onClick={() => setMeasureMode(!measureMode)}
+            aria-label="Toggle measure mode"
+            title="Measure angular distance (click 2 stars)"
+          >
+            <Ruler className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             className="h-8 w-8 text-slate-400 hover:bg-white/10 hover:text-slate-100"
             onClick={() => setShowShortcuts(true)}
             aria-label="Keyboard shortcuts"
@@ -302,6 +341,8 @@ export default function Home() {
             <SkySummaryPanel />
             {/* Guided tour (top-center) */}
             <SkyTour />
+            {/* Measurement overlay (bottom-center) */}
+            <MeasureOverlay />
             {/* Observer badge overlay */}
             <div className="pointer-events-none absolute left-3 bottom-3 rounded-md border border-white/10 bg-slate-950/80 px-2.5 py-1.5 text-[10px] text-slate-300 backdrop-blur">
               <div className="flex items-center gap-1.5">

@@ -438,3 +438,65 @@ Unresolved/Minor:
 - No meteor showers are active on Jul 9 (current date) — feature is correctly empty; would show Perseids in August.
 - Planet magnitudes are approximate (don't account for phase/distance).
 - Could add ISS/satellite tracking and lunar occultation predictions in future.
+
+---
+Task ID: cron-review-4
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 4)
+Task: QA testing, angular distance measurement tool, deep star info, observing conditions panel.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 3 — app had meteor showers, night mode, guided tour, meteor radiants.
+- Tested with agent-browser: all interactions work, console clean (after fresh session), layout healthy (header 150px, sky map 260px).
+- VLM rated 8/10. No critical bugs found.
+
+**New Features:**
+1. **Angular distance measurement tool** (MeasureOverlay + SkyMap integration):
+   - New `measureMode`, `measureStart`, `measureEnd` state in Zustand store.
+   - Ruler icon button in toolbar toggles measure mode (highlighted in sky when active).
+   - Click two stars on the sky map to measure the angular distance between them.
+   - SkyMap renders a dashed cyan line between the two stars with the angle label at the midpoint.
+   - A preview line follows the cursor to the hovered star before the second click.
+   - MeasureOverlay (bottom-center card) shows: separation (° or arcmin), position angle (°), alt/az separation, and star names.
+   - Computes true angular separation via spherical law of cosines on J2000 RA/Dec, plus position angle via atan2.
+   - VLM rated 9/10: "shows separation (23.68°), position angle (67°), and alt/az separation. Dashed line connects the stars."
+
+2. **Deep star info with physical properties** (starProperties.ts + StarDetails):
+   - New data file with temperature, mass, radius, luminosity, age, rotation, variability type, and interesting notes for ~20 bright stars (Sirius, Canopus, Arcturus, Vega, Capella, Rigel, Betelgeuse, Antares, Spica, etc.).
+   - StarDetails panel now shows a "Physical Properties" section (when available) with:
+     - 6 stat boxes: Temperature (K), Mass (M☉), Radius (R☉), Luminosity (L☉), Age (Myr), Rotation (km/s).
+     - Variability type badge (e.g. "Eclipsing binary", "Cepheid variable").
+     - Amber-highlighted notes box with interesting facts (e.g. "Brightest star in the night sky. Binary system with a white dwarf (Sirius B).").
+   - Verified: Sirius shows 9,940 K, 2.063 M☉, 1.711 R☉, 25.4 L☉, 242 Myr, 16 km/s, and the white dwarf note.
+
+3. **Observing conditions panel** (ObservingConditions.tsx):
+   - New Telescope icon "Observing" button in the toolbar.
+   - Computes the next 24h of sun/moon altitudes at 5-min resolution.
+   - Shows dark-sky quality rating (Excellent/Good/Fair/Poor) based on moon-free dark hours.
+   - Displays total dark hours and moon-free dark hours.
+   - Full twilight timeline: Sunset → Civil/Nautical/Astronomical dusk → Astronomical/Nautical/Civil dawn → Sunrise.
+   - Moon interference section: moonset and moonrise times.
+   - Handles polar conditions gracefully.
+   - Verified: shows "Good" quality, 5.2h total dark, 3.3h moon-free, full timeline from 20:20 sunset to 05:40 sunrise.
+
+**Bug Fixes:**
+- Fixed SkyMap useCallback dependency array — React Compiler required `measureMode`, `measureStart`, `measureEnd` in deps since the render closure reads them. Added all three to the dependency array.
+- Dev server restarted once (had died between sessions) via `setsid -f`.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: all features work (measurement tool with 2-star click, physical properties in details panel, observing conditions popover).
+- Console: clean (no errors in fresh session).
+- VLM ratings: measurement tool 9/10, overall 8/10.
+
+Stage Summary:
+- Added 3 new features: angular distance measurement tool, deep star physical properties, observing conditions panel.
+- App now covers: stars (with physical data), Sun/Moon/planets, Messier objects, meteor showers, constellations, measurement, observing conditions — with guided tour and night mode.
+- All features integrate cleanly with the existing render pipeline and store.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- Physical properties only available for ~20 brightest stars; could be expanded.
+- Observing conditions uses 5-min sampling (288 steps) which is approximate but fast.
+- Could add ISS/satellite tracking and lunar occultation predictions in future.
