@@ -102,7 +102,7 @@ export function TimeControls() {
     (clockMode === "fast" || clockMode === "reverse") && timeSpeed === s;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 backdrop-blur">
+    <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 backdrop-blur [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
       {/* Live date / time (observer tz) */}
       <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1.5">
         <Clock className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden />

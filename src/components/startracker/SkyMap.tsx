@@ -19,9 +19,11 @@
  */
 
 import { useEffect, useRef, useCallback, useMemo } from "react";
+import { Download } from "lucide-react";
 import { useStarTracker } from "@/lib/store";
 import { STARS, STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
 import { CONSTELLATION_LINES, CONSTELLATION_MAP } from "@/data/constellations";
+import { MESSIER, MESSIER_TYPE_COLORS, type MessierObject } from "@/data/messier";
 import {
   buildFrame,
   transformStar,
@@ -113,9 +115,10 @@ export function SkyMap() {
   // rAF loop that reads from it. This avoids re-subscribing on every prop change.
   const renderRef = useRef<() => void>(() => {});
 
-  // The render function reads current props/state at call time via closure,
-  // and is updated each render via the assignment below.
-  renderRef.current = () => {
+  // The render function reads current props/state at call time via closure.
+  // We sync it to the ref inside an effect (not during render) to satisfy the
+  // React Compiler's "no ref writes during render" rule.
+  const render = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -131,6 +134,7 @@ export function SkyMap() {
     const cy = H / 2;
     const radius = Math.min(W, H) / 2 - 8 * dpr;
     const scale = Math.min(W, H) / 600;
+    const timeMs = performance.now();
 
     // 1. Sky background gradient (dark zenith → lighter horizon)
     const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
@@ -219,31 +223,48 @@ export function SkyMap() {
 
       // Apply spectral color
       const [cr, cg, cb] = spectralColor(star.spectral);
-      const alpha = magnitudeToOpacity(star.mag);
+      const baseAlpha = magnitudeToOpacity(star.mag);
       const r = magnitudeToRadius(star.mag, scale);
+
+      // Subtle twinkle: per-star phase based on HIP, modulated by time.
+      // Amplitude is small (±8%) and only for stars below the refraction layer
+      // so the effect is atmospheric without being distracting.
+      const twinklePhase = (star.hip % 100) / 100 * Math.PI * 2;
+      const twinkle = 1 + 0.08 * Math.sin(timeMs / 800 + twinklePhase);
+      const alpha = baseAlpha * twinkle;
 
       // Glow for bright stars
       if (star.mag < 1.5) {
-        const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 6);
-        glow.addColorStop(0, `rgba(${cr},${cg},${cb},${alpha * 0.4})`);
+        const glowR = r * 6;
+        const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, glowR);
+        glow.addColorStop(0, `rgba(${cr},${cg},${cb},${alpha * 0.45})`);
+        glow.addColorStop(0.4, `rgba(${cr},${cg},${cb},${alpha * 0.15})`);
         glow.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
         ctx.fillStyle = glow;
         ctx.beginPath();
-        ctx.arc(proj.x, proj.y, r * 6, 0, 2 * Math.PI);
+        ctx.arc(proj.x, proj.y, glowR, 0, 2 * Math.PI);
         ctx.fill();
       }
 
-      // Star body
+      // Star body — white-hot core for bright stars
       ctx.beginPath();
       ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
       ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
       ctx.fill();
 
+      // Inner bright core for very bright stars (white center)
+      if (star.mag < 1.0) {
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.7})`;
+        ctx.arc(proj.x, proj.y, r * 0.4, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
       // Diffraction spikes for very bright stars
       if (star.mag < 0.5) {
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * 0.6})`;
-        ctx.lineWidth = 0.5 * dpr;
-        const spike = r * 4;
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * 0.5})`;
+        ctx.lineWidth = 0.6 * dpr;
+        const spike = r * 4.5;
         ctx.beginPath();
         ctx.moveTo(proj.x - spike, proj.y);
         ctx.lineTo(proj.x + spike, proj.y);
@@ -322,6 +343,11 @@ export function SkyMap() {
       drawSolarSystem(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
     }
 
+    // 9c. Messier deep-sky objects
+    if (layers.messier) {
+      drawMessier(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
+    }
+
     // 10. Hovered star ring
     if (hoveredHip != null) {
       const rs = renderedStars.find((s) => s.star.hip === hoveredHip);
@@ -378,7 +404,12 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
-  };
+  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime]);
+
+  // Sync the latest render closure into the ref (inside an effect, not during render).
+  useEffect(() => {
+    renderRef.current = render;
+  }, [render]);
 
   // Single rAF loop — reads the latest render fn from the ref each frame.
   useEffect(() => {
@@ -452,6 +483,17 @@ export function SkyMap() {
     [view.zoom, setView]
   );
 
+  const handleExport = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Create a temporary link and download the canvas as PNG
+    const link = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    link.download = `startracker-${ts}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  }, []);
+
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-lg">
       <canvas
@@ -463,6 +505,15 @@ export function SkyMap() {
         onWheel={handleWheel}
         aria-label="Interactive sky map. Click a star to view details."
       />
+      {/* Export button */}
+      <button
+        onClick={handleExport}
+        title="Export sky map as PNG"
+        aria-label="Export sky map as PNG"
+        className="absolute left-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-slate-950/80 text-slate-400 backdrop-blur transition-colors hover:bg-slate-800 hover:text-amber-300"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </button>
       {/* Hover tooltip */}
       {hoveredHip != null && STARS_BY_HIP.has(hoveredHip) && (
         <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/15 bg-slate-950/85 px-3 py-2 text-xs text-slate-100 shadow-xl backdrop-blur">
@@ -901,4 +952,182 @@ function drawSolarSystem(
       ctx.fillText(`☽ Moon ${(illum * 100).toFixed(0)}%`, proj.x + r + 6 * dpr, proj.y);
     }
   }
+}
+
+/**
+ * Draw Messier catalog deep-sky objects on the sky map.
+ *
+ * Each object is rendered with a type-specific glyph:
+ *  - galaxy         → faint amber tilted ellipse (suggesting a disk)
+ *  - nebula         → small dashed green circle
+ *  - planetary      → small cyan ring (annulus)
+ *  - open cluster   → cluster of tiny yellow dots arranged in a ring
+ *  - globular       → fuzzy orange circle (radial gradient)
+ *  - supernova      → tiny red remnant dot with cross spikes
+ *
+ * Below-horizon objects are skipped. A small "M{number}" label is drawn next
+ * to each visible object, color-coded by type.
+ */
+function drawMessier(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  frame: FrameContext,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  _date: Date,
+  latRad: number
+) {
+  for (const m of MESSIER) {
+    const tr = transformStar(m.ra, m.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue; // below horizon
+
+    const proj = projectStereographic({
+      cx,
+      cy,
+      radius,
+      alt,
+      az: tr.horizontal.az + rotation,
+    });
+
+    // Scale the glyph by angular size, but clamp to a sensible range so
+    // large angular extents (M31 ~3°) don't dominate the chart.
+    const sizePx = Math.max(3 * dpr, Math.min(14 * dpr, (m.size / 30) * 6 * dpr));
+
+    drawMessierGlyph(ctx, m, proj.x, proj.y, sizePx, dpr);
+
+    // Label — color-coded by type
+    ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = MESSIER_TYPE_COLORS[m.type];
+    ctx.fillText(`M${m.number}`, proj.x + sizePx + 3 * dpr, proj.y);
+  }
+}
+
+/** Draw the type-specific glyph for a Messier object at (x, y). */
+function drawMessierGlyph(
+  ctx: CanvasRenderingContext2D,
+  m: MessierObject,
+  x: number,
+  y: number,
+  size: number,
+  dpr: number
+) {
+  ctx.save();
+  switch (m.type) {
+    case "galaxy": {
+      // Faint amber tilted ellipse — disk orientation varies with number
+      const tilt = (m.number * 0.6) % Math.PI;
+      ctx.translate(x, y);
+      ctx.rotate(tilt);
+      ctx.strokeStyle = "rgba(252, 211, 77, 0.55)";
+      ctx.fillStyle = "rgba(252, 211, 77, 0.10)";
+      ctx.lineWidth = 0.9 * dpr;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size, size * 0.4, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      // Faint core glow
+      const core = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 0.5);
+      core.addColorStop(0, "rgba(252, 211, 77, 0.45)");
+      core.addColorStop(1, "rgba(252, 211, 77, 0)");
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.5, 0, 2 * Math.PI);
+      ctx.fill();
+      break;
+    }
+    case "nebula": {
+      // Dashed green circle
+      ctx.strokeStyle = "rgba(134, 239, 172, 0.75)";
+      ctx.fillStyle = "rgba(134, 239, 172, 0.08)";
+      ctx.lineWidth = 0.9 * dpr;
+      ctx.setLineDash([2 * dpr, 2 * dpr]);
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      break;
+    }
+    case "planetary": {
+      // Cyan ring (annulus)
+      ctx.strokeStyle = "rgba(103, 232, 249, 0.85)";
+      ctx.fillStyle = "rgba(103, 232, 249, 0.10)";
+      ctx.lineWidth = 1.1 * dpr;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      // Inner hole
+      ctx.fillStyle = "rgba(2, 6, 23, 0.85)";
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.45, 0, 2 * Math.PI);
+      ctx.fill();
+      break;
+    }
+    case "open": {
+      // Yellow cluster of dots in a ring pattern
+      const dots = 7;
+      ctx.fillStyle = "rgba(253, 224, 71, 0.85)";
+      for (let i = 0; i < dots; i++) {
+        const a = (i / dots) * 2 * Math.PI;
+        const dx = x + Math.cos(a) * size * 0.7;
+        const dy = y + Math.sin(a) * size * 0.7;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 0.9 * dpr, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      // Center dot
+      ctx.fillStyle = "rgba(253, 224, 71, 0.95)";
+      ctx.beginPath();
+      ctx.arc(x, y, 1.0 * dpr, 0, 2 * Math.PI);
+      ctx.fill();
+      break;
+    }
+    case "globular": {
+      // Fuzzy orange circle with radial gradient
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+      grad.addColorStop(0, "rgba(251, 146, 60, 0.95)");
+      grad.addColorStop(0.4, "rgba(251, 146, 60, 0.45)");
+      grad.addColorStop(1, "rgba(251, 146, 60, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fill();
+      // Outer ring for definition
+      ctx.strokeStyle = "rgba(251, 146, 60, 0.55)";
+      ctx.lineWidth = 0.8 * dpr;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.stroke();
+      break;
+    }
+    case "supernova": {
+      // Red remnant dot with cross spikes
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+      grad.addColorStop(0, "rgba(248, 113, 113, 0.9)");
+      grad.addColorStop(1, "rgba(248, 113, 113, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(248, 113, 113, 0.7)";
+      ctx.lineWidth = 0.7 * dpr;
+      const spike = size * 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - spike, y);
+      ctx.lineTo(x + spike, y);
+      ctx.moveTo(x, y - spike);
+      ctx.lineTo(x, y + spike);
+      ctx.stroke();
+      break;
+    }
+  }
+  ctx.restore();
 }

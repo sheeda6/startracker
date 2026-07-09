@@ -29,6 +29,8 @@ import { SearchBar } from "@/components/startracker/SearchBar";
 import { FilterPanel } from "@/components/startracker/FilterPanel";
 import { LayersPanel } from "@/components/startracker/LayersPanel";
 import { SkySummaryPanel } from "@/components/startracker/SkySummaryPanel";
+import { ConstellationBrowser } from "@/components/startracker/ConstellationBrowser";
+import { MagnitudeFilter } from "@/components/startracker/MagnitudeFilter";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -118,7 +120,7 @@ export default function Home() {
     <div className="flex h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
       {/* ─── Top Toolbar ─────────────────────────────────────── */}
       <header className="shrink-0 border-b border-white/10 bg-slate-950/85 backdrop-blur-md">
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        <div className="flex items-center gap-2 overflow-x-auto px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* Logo + title */}
           <div className="flex items-center gap-2">
             <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 via-orange-500 to-rose-600 shadow-lg shadow-amber-500/20">
@@ -140,9 +142,33 @@ export default function Home() {
           {/* Search */}
           <SearchBar />
 
+          {/* Magnitude quick-filter */}
+          <MagnitudeFilter />
+
           <div className="flex-1" />
 
           {/* Settings popovers */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+              >
+                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                <span className="hidden lg:inline">Constellations</span>
+                <span className="lg:hidden">Con</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-80 border-white/10 bg-slate-950/95 p-0 text-slate-200 backdrop-blur-md"
+              align="end"
+              sideOffset={6}
+            >
+              <ConstellationBrowser />
+            </PopoverContent>
+          </Popover>
+
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -246,7 +272,7 @@ export default function Home() {
       {/* ─── Main content ─────────────────────────────────────── */}
       <main className="flex flex-1 flex-col gap-2 p-2 min-h-0">
         {/* Sky map + details row */}
-        <div className="flex flex-1 gap-2 min-h-0">
+        <div className="flex flex-1 gap-2 min-h-[260px]">
           {/* Sky map */}
           <section
             className="relative flex-1 min-w-0 rounded-lg border border-white/10 bg-slate-950"
@@ -297,7 +323,7 @@ export default function Home() {
         {/* Bottom table */}
         {bottomPanelOpen && (
           <section
-            className="h-[220px] shrink-0"
+            className="h-[200px] shrink-0"
             aria-label="Star catalog table"
           >
             <StarTable />
