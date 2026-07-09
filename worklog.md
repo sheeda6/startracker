@@ -500,3 +500,55 @@ Unresolved/Minor:
 - Physical properties only available for ~20 brightest stars; could be expanded.
 - Observing conditions uses 5-min sampling (288 steps) which is approximate but fast.
 - Could add ISS/satellite tracking and lunar occultation predictions in future.
+
+---
+Task ID: cron-review-5
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 5)
+Task: QA testing, improved star rendering, compass/zoom control, drag-to-rotate.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 4 — app had measurement tool, deep star info, observing conditions.
+- Tested with agent-browser: console clean, layout healthy (header 167px, sky map 260px).
+- VLM rated 7/10 with feedback: "sky map lacks depth, flat/stylized stars."
+
+**New Features & Improvements:**
+1. **Realistic star rendering** (SkyMap):
+   - Multi-layer glow: outer halo (10× radius for mag<1, 6× for mag<3) + inner corona (3× radius) with 3-stop radial gradients.
+   - 3D sphere body: gradient disc with white-hot center offset for a sphere-like appearance.
+   - Diffraction spikes (Airy disk pattern): 4-point cross with gradient-faded spikes for mag<1.5, intensity scaled by brightness.
+   - Extended glow to mag<3 (was mag<1.5), so more stars have visible halos.
+   - Twinkle amplitude refined to ±6% at 700ms period.
+
+2. **Compass/zoom control widget** (CompassControl.tsx):
+   - SVG compass rose with rotating N-S-E-W ticks (synced to view.rotation).
+   - Zoom in/out buttons + live zoom level display.
+   - Rotate left/right buttons (15° increments).
+   - Reset view button (restores zoom=1, rotation=0).
+   - Positioned bottom-right of sky map, glass-morphism styling.
+   - VLM confirmed: "compass rose and zoom/rotate buttons are visible, 8/10."
+
+3. **Drag-to-rotate** (SkyMap):
+   - Mouse down activates drag mode; horizontal mouse movement rotates the sky map.
+   - Drag detection threshold (3px) prevents accidental drags on star clicks.
+   - Click after drag is suppressed (dragRef.current.moved flag).
+   - Cursor changes: "grab" (default), "grabbing" (dragging), "pointer" (star hover).
+   - Verified: drag dispatches rotate the map by ~3° per small drag; reset clears it.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: compass control buttons work (zoom in/out, rotate left/right, reset), drag-to-rotate works, star rendering improved.
+- Console: clean.
+- VLM: 8/10 overall, compass control visible and functional.
+
+Stage Summary:
+- Improved star rendering with multi-layer glow, 3D gradient bodies, and diffraction spikes.
+- Added compass/zoom control widget with SVG compass rose.
+- Added drag-to-rotate for intuitive sky map interaction.
+- App remains stable with all prior features intact.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- VLM couldn't see fine star rendering details at screenshot resolution (954×258 canvas); effects are visible at full size.
+- Could add touch support for mobile drag-to-rotate.

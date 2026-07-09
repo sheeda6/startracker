@@ -34,6 +34,7 @@ import { MagnitudeFilter } from "@/components/startracker/MagnitudeFilter";
 import { SkyTour } from "@/components/startracker/SkyTour";
 import { MeasureOverlay } from "@/components/startracker/MeasureOverlay";
 import { ObservingConditions } from "@/components/startracker/ObservingConditions";
+import { CompassControl } from "@/components/startracker/CompassControl";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -343,6 +344,8 @@ export default function Home() {
             <SkyTour />
             {/* Measurement overlay (bottom-center) */}
             <MeasureOverlay />
+            {/* Compass + zoom control (bottom-right) */}
+            <CompassControl />
             {/* Observer badge overlay */}
             <div className="pointer-events-none absolute left-3 bottom-3 rounded-md border border-white/10 bg-slate-950/80 px-2.5 py-1.5 text-[10px] text-slate-300 backdrop-blur">
               <div className="flex items-center gap-1.5">

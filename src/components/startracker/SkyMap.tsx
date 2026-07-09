@@ -57,6 +57,7 @@ export function SkyMap() {
   const renderedRef = useRef<RenderedStar[]>([]);
   const lastTimeRef = useRef<number>(0);
   const dprRef = useRef<number>(1);
+  const dragRef = useRef<{ active: boolean; lastX: number; lastY: number; moved: boolean }>({ active: false, lastX: 0, lastY: 0, moved: false });
 
   const observer = useStarTracker((s) => s.observer);
   const currentTime = useStarTracker((s) => s.currentTime);
@@ -233,49 +234,73 @@ export function SkyMap() {
       const r = magnitudeToRadius(star.mag, scale);
 
       // Subtle twinkle: per-star phase based on HIP, modulated by time.
-      // Amplitude is small (±8%) and only for stars below the refraction layer
-      // so the effect is atmospheric without being distracting.
       const twinklePhase = (star.hip % 100) / 100 * Math.PI * 2;
-      const twinkle = 1 + 0.08 * Math.sin(timeMs / 800 + twinklePhase);
+      const twinkle = 1 + 0.06 * Math.sin(timeMs / 700 + twinklePhase);
       const alpha = baseAlpha * twinkle;
 
-      // Glow for bright stars
-      if (star.mag < 1.5) {
-        const glowR = r * 6;
-        const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, glowR);
-        glow.addColorStop(0, `rgba(${cr},${cg},${cb},${alpha * 0.45})`);
-        glow.addColorStop(0.4, `rgba(${cr},${cg},${cb},${alpha * 0.15})`);
-        glow.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-        ctx.fillStyle = glow;
+      // Multi-layer glow for brighter stars — outer halo + inner corona
+      if (star.mag < 3.0) {
+        // Outer halo (large, faint)
+        const haloR = r * (star.mag < 1.0 ? 10 : 6);
+        const halo = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, haloR);
+        const haloAlpha = star.mag < 0 ? 0.35 : star.mag < 1 ? 0.22 : star.mag < 2 ? 0.12 : 0.06;
+        halo.addColorStop(0, `rgba(${cr},${cg},${cb},${haloAlpha * alpha})`);
+        halo.addColorStop(0.3, `rgba(${cr},${cg},${cb},${haloAlpha * 0.4 * alpha})`);
+        halo.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.fillStyle = halo;
         ctx.beginPath();
-        ctx.arc(proj.x, proj.y, glowR, 0, 2 * Math.PI);
+        ctx.arc(proj.x, proj.y, haloR, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // Inner corona (smaller, brighter)
+        const coronaR = r * 3;
+        const corona = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, coronaR);
+        corona.addColorStop(0, `rgba(${cr},${cg},${cb},${0.6 * alpha})`);
+        corona.addColorStop(0.5, `rgba(${cr},${cg},${cb},${0.2 * alpha})`);
+        corona.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.fillStyle = corona;
+        ctx.beginPath();
+        ctx.arc(proj.x, proj.y, coronaR, 0, 2 * Math.PI);
         ctx.fill();
       }
 
-      // Star body — white-hot core for bright stars
+      // Star body — gradient disc for a 3D sphere look
+      const bodyGrad = ctx.createRadialGradient(
+        proj.x - r * 0.2, proj.y - r * 0.2, 0,
+        proj.x, proj.y, r
+      );
+      bodyGrad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+      bodyGrad.addColorStop(0.3, `rgba(${Math.min(255,cr+40)},${Math.min(255,cg+40)},${Math.min(255,cb+40)},${alpha})`);
+      bodyGrad.addColorStop(1, `rgba(${cr},${cg},${cb},${alpha * 0.8})`);
+      ctx.fillStyle = bodyGrad;
       ctx.beginPath();
-      ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
       ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
       ctx.fill();
 
-      // Inner bright core for very bright stars (white center)
-      if (star.mag < 1.0) {
+      // Diffraction spikes (Airy disk pattern) for bright stars
+      if (star.mag < 1.5) {
+        const spikeIntensity = star.mag < 0 ? 0.6 : star.mag < 0.5 ? 0.45 : 0.25;
+        const spikeLen = r * (star.mag < 0 ? 6 : 4.5);
+        // 4-point cross (horizontal + vertical)
+        const spikeGrad = ctx.createLinearGradient(proj.x - spikeLen, proj.y, proj.x + spikeLen, proj.y);
+        spikeGrad.addColorStop(0, `rgba(${cr},${cg},${cb},0)`);
+        spikeGrad.addColorStop(0.5, `rgba(${cr},${cg},${cb},${spikeIntensity * alpha})`);
+        spikeGrad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.strokeStyle = spikeGrad;
+        ctx.lineWidth = (star.mag < 0 ? 1.2 : 0.8) * dpr;
+        ctx.lineCap = "round";
         ctx.beginPath();
-        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.7})`;
-        ctx.arc(proj.x, proj.y, r * 0.4, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-
-      // Diffraction spikes for very bright stars
-      if (star.mag < 0.5) {
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * 0.5})`;
-        ctx.lineWidth = 0.6 * dpr;
-        const spike = r * 4.5;
+        ctx.moveTo(proj.x - spikeLen, proj.y);
+        ctx.lineTo(proj.x + spikeLen, proj.y);
+        ctx.stroke();
+        const spikeGradV = ctx.createLinearGradient(proj.x, proj.y - spikeLen, proj.x, proj.y + spikeLen);
+        spikeGradV.addColorStop(0, `rgba(${cr},${cg},${cb},0)`);
+        spikeGradV.addColorStop(0.5, `rgba(${cr},${cg},${cb},${spikeIntensity * alpha})`);
+        spikeGradV.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.strokeStyle = spikeGradV;
         ctx.beginPath();
-        ctx.moveTo(proj.x - spike, proj.y);
-        ctx.lineTo(proj.x + spike, proj.y);
-        ctx.moveTo(proj.x, proj.y - spike);
-        ctx.lineTo(proj.x, proj.y + spike);
+        ctx.moveTo(proj.x, proj.y - spikeLen);
+        ctx.lineTo(proj.x, proj.y + spikeLen);
         ctx.stroke();
       }
     }
@@ -504,12 +529,44 @@ export function SkyMap() {
   }, []);
 
   // Mouse interaction
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY, moved: false };
+    },
+    []
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const wasDragging = dragRef.current.active && dragRef.current.moved;
+      dragRef.current.active = false;
+      // If we were dragging, don't treat this as a click (selection handled in click handler)
+      if (wasDragging) {
+        e.stopPropagation();
+      }
+    },
+    []
+  );
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const dpr = dprRef.current;
+
+      // Handle drag-to-rotate
+      if (dragRef.current.active) {
+        const dx = e.clientX - dragRef.current.lastX;
+        if (Math.abs(dx) > 3) dragRef.current.moved = true;
+        // Rotate based on horizontal drag
+        setView({ rotation: useStarTracker.getState().view.rotation + dx * 0.005 });
+        dragRef.current.lastX = e.clientX;
+        dragRef.current.lastY = e.clientY;
+        canvas.style.cursor = "grabbing";
+        return;
+      }
+
       const x = (e.clientX - rect.left) * dpr;
       const y = (e.clientY - rect.top) * dpr;
       // Find nearest star within tolerance
@@ -523,13 +580,18 @@ export function SkyMap() {
         }
       }
       setHoveredHip(best ? best.star.hip : null);
-      canvas.style.cursor = best ? "pointer" : "crosshair";
+      canvas.style.cursor = best ? "pointer" : "grab";
     },
-    [setHoveredHip]
+    [setHoveredHip, setView]
   );
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      // Skip click if we just finished dragging
+      if (dragRef.current.moved) {
+        dragRef.current.moved = false;
+        return;
+      }
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
@@ -588,12 +650,14 @@ export function SkyMap() {
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-lg">
       <canvas
         ref={canvasRef}
-        className="block h-full w-full"
+        className="block h-full w-full cursor-grab"
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoveredHip(null)}
+        onMouseLeave={() => { setHoveredHip(null); dragRef.current.active = false; }}
         onClick={handleClick}
         onWheel={handleWheel}
-        aria-label="Interactive sky map. Click a star to view details."
+        aria-label="Interactive sky map. Click a star to view details. Drag to rotate."
       />
       {/* Export button */}
       <button
