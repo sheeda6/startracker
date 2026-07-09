@@ -38,6 +38,7 @@ import { CompassControl } from "@/components/startracker/CompassControl";
 import { TimeJump } from "@/components/startracker/TimeJump";
 import { TonightAtAGlance } from "@/components/startracker/TonightAtAGlance";
 import { ProperMotionDemo } from "@/components/startracker/ProperMotionDemo";
+import { SettingsExport, loadConfigFromHash } from "@/components/startracker/SettingsExport";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,7 @@ import {
   Calendar,
   TrendingUp,
   History,
+  Share2,
 } from "lucide-react";
 
 export default function Home() {
@@ -90,6 +92,11 @@ export default function Home() {
   const measureMode = useStarTracker((s) => s.measureMode);
   const setMeasureMode = useStarTracker((s) => s.setMeasureMode);
   const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // Load shared config from URL hash on mount
+  useEffect(() => {
+    loadConfigFromHash();
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -122,6 +129,10 @@ export default function Home() {
           break;
         case "Escape":
           setSelectedHip(null);
+          setMeasureMode(false);
+          break;
+        case "d": case "D":
+          setMeasureMode(!useStarTracker.getState().measureMode);
           break;
         case "?":
           setShowShortcuts((v) => !v);
@@ -133,7 +144,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clockMode, setClockMode, setCurrentTime, resetToNow, setSelectedHip, nightMode, setNightMode]);
+  }, [clockMode, setClockMode, setCurrentTime, resetToNow, setSelectedHip, nightMode, setNightMode, setMeasureMode]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
@@ -165,6 +176,28 @@ export default function Home() {
           <MagnitudeFilter />
 
           <div className="flex-1" />
+
+          {/* Settings export/import */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+              >
+                <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                <span className="hidden lg:inline">Share</span>
+                <span className="lg:hidden">Share</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-80 border-white/10 bg-slate-950/95 p-0 text-slate-200 backdrop-blur-md"
+              align="end"
+              sideOffset={6}
+            >
+              <SettingsExport />
+            </PopoverContent>
+          </Popover>
 
           {/* Proper motion demo */}
           <Popover>
@@ -500,7 +533,8 @@ export default function Home() {
                 { keys: ["N"], desc: "Reset to now" },
                 { keys: ["←", "→"], desc: "Step backward / forward 1 min" },
                 { keys: ["Shift+←", "Shift+→"], desc: "Step backward / forward 1 hour" },
-                { keys: ["Esc"], desc: "Deselect star" },
+                { keys: ["Esc"], desc: "Deselect + exit measure mode" },
+                { keys: ["D"], desc: "Toggle measure mode" },
                 { keys: ["M"], desc: "Toggle night mode (red)" },
                 { keys: ["?"], desc: "Toggle this help" },
               ].map(({ keys, desc }) => (
