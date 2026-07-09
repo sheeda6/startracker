@@ -24,6 +24,7 @@ import { useStarTracker } from "@/lib/store";
 import { STARS, STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
 import { CONSTELLATION_LINES, CONSTELLATION_MAP } from "@/data/constellations";
 import { MESSIER, MESSIER_TYPE_COLORS, type MessierObject } from "@/data/messier";
+import { getActiveShowers, daysToPeak } from "@/data/meteorShowers";
 import {
   buildFrame,
   transformStar,
@@ -346,6 +347,11 @@ export function SkyMap() {
     // 9c. Messier deep-sky objects
     if (layers.messier) {
       drawMessier(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
+    }
+
+    // 9d. Meteor shower radiants
+    if (layers.meteorShowers) {
+      drawMeteorRadiants(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
     }
 
     // 10. Hovered star ring
@@ -1130,4 +1136,129 @@ function drawMessierGlyph(
     }
   }
   ctx.restore();
+}
+
+/**
+ * Draw active meteor-shower radiants on the sky map.
+ *
+ * For each currently-active shower (per `getActiveShowers(date)`):
+ *  - transform the J2000 radiant RA/Dec to horizontal coords via `transformStar`
+ *  - apply atmospheric refraction (if enabled) and skip if below the horizon
+ *  - project to canvas with `projectStereographic`
+ *  - render a small 4-pointed amber/red star-burst icon with short radiating
+ *    lines, plus a two-line label (shower name + "ZHR {zhr}")
+ *  - showers near peak (daysToPeak <= 1) get a larger, more prominent glow.
+ *
+ * Signature mirrors `drawSolarSystem` / `drawMessier`.
+ */
+function drawMeteorRadiants(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  frame: FrameContext,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latRad: number
+) {
+  const showers = getActiveShowers(date);
+  if (showers.length === 0) return;
+
+  // Amber/orange palette tuned for the dark slate-950 sky background.
+  const markerColor = "rgba(251, 146, 60, 0.85)";
+  const spikeColor = "rgba(251, 146, 60, 0.7)";
+  const glowColorPeak = "rgba(253, 186, 116, 0.55)";
+  const glowColorNormal = "rgba(251, 146, 60, 0.30)";
+  const labelColor = "rgba(253, 186, 116, 0.95)";
+  const zhrColor = "rgba(252, 165, 60, 0.75)";
+
+  for (const shower of showers) {
+    const tr = transformStar(shower.radiantRa, shower.radiantDec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue; // below horizon
+
+    const proj = projectStereographic({
+      cx,
+      cy,
+      radius,
+      alt,
+      az: tr.horizontal.az + rotation,
+    });
+
+    const nearPeak = daysToPeak(shower, date) <= 1;
+    const size = 6 * dpr * (nearPeak ? 1.4 : 1);
+    const glowRadius = (nearPeak ? 22 : 12) * dpr;
+
+    ctx.save();
+
+    // Glow halo (more prominent when near peak)
+    const glow = ctx.createRadialGradient(
+      proj.x,
+      proj.y,
+      0,
+      proj.x,
+      proj.y,
+      glowRadius
+    );
+    glow.addColorStop(0, nearPeak ? glowColorPeak : glowColorNormal);
+    glow.addColorStop(1, "rgba(251, 146, 60, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, glowRadius, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // 4-pointed star-burst: two perpendicular spike lines + a small center dot
+    ctx.translate(proj.x, proj.y);
+    ctx.strokeStyle = spikeColor;
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.lineCap = "round";
+    const spikeLen = size * 1.8;
+    // Diagonal spikes (X pattern) — 4 directions
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * 2 * Math.PI + Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * spikeLen, Math.sin(a) * spikeLen);
+      ctx.stroke();
+    }
+    // Cross spikes (cardinal) — slightly shorter, for an 8-ray burst look
+    const shortLen = spikeLen * 0.6;
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * 2 * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * shortLen, Math.sin(a) * shortLen);
+      ctx.stroke();
+    }
+
+    // Bright center dot
+    ctx.fillStyle = markerColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.35, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Label: shower name (small) + "ZHR {zhr}" (even smaller)
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const labelX = proj.x + size + 3 * dpr;
+    const labelY = proj.y - size;
+    ctx.font = `bold ${10 * dpr}px ui-sans-serif, system-ui`;
+    ctx.fillStyle = labelColor;
+    ctx.fillText(shower.name, labelX, labelY);
+    ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+    ctx.fillStyle = zhrColor;
+    ctx.fillText(`ZHR ${shower.zhr}`, labelX, labelY + 11 * dpr);
+    if (nearPeak) {
+      ctx.font = `bold ${8 * dpr}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = "rgba(253, 224, 71, 0.95)";
+      ctx.fillText("● peak", labelX, labelY + 22 * dpr);
+    }
+    ctx.restore();
+  }
 }

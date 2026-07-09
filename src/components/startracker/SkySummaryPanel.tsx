@@ -19,7 +19,8 @@ import { useStarTracker } from "@/lib/store";
 import { STARS } from "@/data/stars";
 import { buildFrame, transformStar, refract } from "@/lib/astro/engine";
 import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
-import { Sun, Moon, Star, Eye, Sparkles, Sunrise, Sunset } from "lucide-react";
+import { getActiveShowers, daysToPeak, type MeteorShower } from "@/data/meteorShowers";
+import { Sun, Moon, Star, Eye, Sparkles, Sunrise, Sunset, Zap } from "lucide-react";
 
 export function SkySummaryPanel() {
   const observer = useStarTracker((s) => s.observer);
@@ -81,6 +82,17 @@ export function SkySummaryPanel() {
     else if (sunAltDeg > -18) { sunStatus = "Astronomical twilight"; sunColor = "text-violet-300"; }
     else { sunStatus = "Night"; sunColor = "text-sky-300"; }
 
+    // Meteor showers
+    const activeShowers = getActiveShowers(currentTime).map((s) => ({
+      ...s,
+      daysToPeak: daysToPeak(s, currentTime),
+      // Compute radiant altitude
+      radiantAlt: (() => {
+        const tr = transformStar(s.radiantRa, s.radiantDec, frame, latRad);
+        return (tr.horizontal.alt * 180) / Math.PI;
+      })(),
+    }));
+
     return {
       sunAltDeg,
       sunStatus,
@@ -92,6 +104,7 @@ export function SkySummaryPanel() {
       visiblePlanets,
       visibleCount,
       brightestVisible,
+      activeShowers,
     };
   }, [observer, currentTime, layers.refraction, filters.maxMagnitude]);
 
@@ -171,6 +184,39 @@ export function SkySummaryPanel() {
           </div>
         </div>
       </div>
+
+      {/* Meteor showers */}
+      {data.activeShowers.length > 0 && (
+        <div className="border-t border-white/5 pt-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-500">
+            <Zap className="h-3 w-3 text-amber-300" />
+            Meteor showers
+          </div>
+          <div className="flex flex-col gap-1">
+            {data.activeShowers.map((s) => {
+              const d = s.daysToPeak;
+              const peakLabel = d === 0 ? "peak tonight" : d === 1 ? "peaks tomorrow" : `peaks in ${d}d`;
+              const radiantUp = s.radiantAlt > 0;
+              return (
+                <div key={s.id} className="flex items-center justify-between gap-2 rounded border border-white/5 bg-white/[0.02] px-1.5 py-1">
+                  <div className="min-w-0">
+                    <div className="truncate text-[11px] text-amber-200">{s.name}</div>
+                    <div className="font-mono text-[9px] text-slate-500">
+                      ZHR {s.zhr} · {peakLabel}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className={`text-[9px] ${radiantUp ? "text-emerald-400" : "text-slate-600"}`}>
+                      {radiantUp ? "↑" : "↓"} {Math.abs(s.radiantAlt).toFixed(0)}°
+                    </span>
+                    <span className="text-[8px] text-slate-600">{s.constellation}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

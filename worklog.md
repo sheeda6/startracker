@@ -331,3 +331,110 @@ Unresolved/Minor:
 - Planet/Messier positions are approximate — sufficient for visual use.
 - On very narrow viewports (<768px) the magnitude filter and some toolbar labels are hidden.
 - Could add more constellation stick-figure definitions and refine Messier glyph sizes.
+
+---
+Task ID: meteor-render
+Agent: subagent (Meteor shower radiant markers on SkyMap)
+Task: Add meteor shower radiant markers to the SkyMap canvas component, with a new "Meteor radiants" layer toggle (default on).
+
+Work Log:
+- Read context: `worklog.md` (especially Task 5 Messier section for the `drawMessier`/`drawSolarSystem` signature pattern + the `// 9c. Messier` render-pipeline insertion point), `src/data/meteorShowers.ts` (confirmed `MeteorShower` interface with `radiantRa`/`radiantDec` in radians, plus exports `METEOR_SHOWERS`, `getActiveShowers`, `isShowerActive`, `daysToPeak`, `getNextShower`), `src/lib/store.ts` (`ViewLayers` interface + default `layers` object), `src/components/startracker/LayersPanel.tsx` (`LAYER_DEFS` array + Lucide import block), and `src/components/startracker/SkyMap.tsx` (render pipeline order at lines 341–349, `drawSolarSystem`/`drawMessier` helpers at the bottom, `transformStar` + `projectStereographic` + `refract` usage).
+- Updated `/home/z/my-project/src/lib/store.ts`:
+  - Added `meteorShowers: boolean;` to the `ViewLayers` interface (immediately after `messier: boolean;`).
+  - Added `meteorShowers: true,` to the default `layers` object so the layer is on by default.
+- Updated `/home/z/my-project/src/components/startracker/LayersPanel.tsx`:
+  - Imported `Zap` from `lucide-react` (added to the existing import block alongside `Telescope`).
+  - Inserted `{ key: "meteorShowers", label: "Meteor radiants", icon: Zap }` in `LAYER_DEFS` immediately after the `messier` entry. The toggle binds to `layers.meteorShowers` via the existing generic `LayerToggle` row component (no other code changes needed).
+- Updated `/home/z/my-project/src/components/startracker/SkyMap.tsx`:
+  - Added import: `import { getActiveShowers, daysToPeak } from "@/data/meteorShowers";`.
+  - Inserted a new render section `// 9d. Meteor shower radiants` right after `// 9c. Messier deep-sky objects`, guarded by `if (layers.meteorShowers)` and calling `drawMeteorRadiants(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad)`. The `layers.meteorShowers`/`layers.refraction` flags and `currentTime`/`latRad` are all already in scope from the existing render closure.
+  - Implemented `drawMeteorRadiants(ctx, cx, cy, radius, frame, rotation, refraction, dpr, date, latRad)` at the bottom of the file (after `drawMessierGlyph`), with the same signature shape as `drawSolarSystem`/`drawMessier`:
+    - Calls `getActiveShowers(date)` and early-returns if none active (e.g. mid-March).
+    - For each active shower: `transformStar(shower.radiantRa, shower.radiantDec, frame, latRad)` → horizontal (alt, az); apply `refract(alt)` when `refraction` is on and `alt < π/2`; skip if `alt <= 0` (below horizon); project via `projectStereographic({ cx, cy, radius, alt, az: az + rotation })`.
+    - Peak-proximity check: `const nearPeak = daysToPeak(shower, date) <= 1;` — drives marker size (1.4× when near peak), glow color (brighter `rgba(253, 186, 116, 0.55)` vs `rgba(251, 146, 60, 0.30)`), and glow radius (22 vs 12 dpr px), and adds a small "● peak" badge below the ZHR label.
+    - Marker glyph (all wrapped in `ctx.save()`/`ctx.restore()`): radial-gradient amber glow halo; an 8-ray star-burst drawn as two perpendicular sets of 4 spikes (4 diagonal at full length `size * 1.8`, 4 cardinal at 0.6× length) using `ctx.lineCap = "round"`; a small `size * 0.35` amber center dot. The whole glyph is translated to `(proj.x, proj.y)` so the spikes radiate from the radiant position.
+    - Label (drawn in a separate `ctx.save()`/`ctx.restore()` block so `textAlign`/`textBaseline`/`font` don't bleed): shower name in bold `10*dpr` ui-sans-serif amber-200, then `ZHR {zhr}` in `9*dpr` ui-monospace amber-500 below it, then (if near peak) a small `8*dpr` "● peak" badge in yellow-200.
+    - Palette: `markerColor = rgba(251, 146, 60, 0.85)`, `spikeColor = rgba(251, 146, 60, 0.7)`, label `rgba(253, 186, 116, 0.95)` — all amber/orange to match the dark slate-950 theme and the spec's example color.
+- Ran `cd /home/z/my-project && bun run lint 2>&1 | tail -10`:
+  - Result: 0 errors, 1 pre-existing warning in `StarTable.tsx` (the TanStack Table `react-hooks/incompatible-library` note — explicitly out of scope per task instructions).
+  - No errors or warnings in any of the files I modified (`store.ts`, `LayersPanel.tsx`, `SkyMap.tsx`).
+- Verified the dev server (`dev.log`) recompiled cleanly after the changes (multiple `✓ Compiled in …ms` lines, no errors after the edits).
+
+Stage Summary:
+- The Zustand store exposes a new `meteorShowers` boolean layer toggle (default on).
+- The LayersPanel exposes a new "Meteor radiants" toggle with the `Zap` icon, placed right after "Messier objects".
+- The SkyMap renders active meteor-shower radiants (via `getActiveShowers(currentTime)`) as small amber 8-ray star-bursts with a glow halo and a two-line label (shower name + "ZHR {zhr}"), and showers near peak (daysToPeak ≤ 1) get a larger, brighter glow plus a "● peak" badge.
+- Below-horizon radiants are skipped, and atmospheric refraction is respected (matching `drawSolarSystem`/`drawMessier`).
+- The new layer is drawn between the Messier layer and the hover/selection highlight rings, so it does not obscure interactive UI.
+- Lint-clean (only the pre-existing StarTable warning remains). Dev server happy.
+
+Unresolved/Minor:
+- The marker uses an 8-ray burst (4 diagonal + 4 cardinal spikes) rather than a strict 4-pointed star; this reads better at small sizes on the dark background. Easy to switch to 4-only by removing the cardinal-spike loop.
+- The "● peak" badge uses a unicode bullet rather than a drawn dot — simpler and font-safe.
+- ZHR is shown at face value (peak ZHR); a more accurate rendering would scale it down by the radiant altitude (`sin(alt)`) and by days-to-peak, but the spec asked for the shower's nominal ZHR so it is shown as-is.
+
+---
+Task ID: cron-review-3
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 3)
+Task: QA testing, meteor showers, night mode, guided tour, meteor radiant rendering.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 2 — app had Messier, constellation browser, magnitude filter, PNG export, star twinkle.
+- Tested with agent-browser: all interactions work, layout healthy (header 150px, sky map 260px), console clean.
+- VLM rated 9/10. No critical bugs found.
+
+**New Features:**
+1. **Meteor shower catalog** (`src/data/meteorShowers.ts`):
+   - 9 major meteor showers: Quadrantids, Lyrids, Eta Aquariids, Delta Aquariids, Perseids, Orionids, Leonids, Geminids, Ursids.
+   - Each with J2000 radiant position, ZHR, velocity, parent body, activity window, peak date.
+   - `getActiveShowers(date)`, `isShowerActive()`, `daysToPeak()`, `getNextShower()` helpers.
+   - Handles year-wrap (Quadrantids spans Dec–Jan).
+
+2. **Meteor showers in SkySummaryPanel**:
+   - Active showers shown with name, ZHR, peak proximity ("peak tonight" / "peaks in Nd"), radiant altitude (↑/↓), and constellation.
+   - Color-coded: amber for shower names, emerald for radiant-up indicator.
+
+3. **Meteor radiant rendering on SkyMap** (dispatched to subagent):
+   - New `meteorShowers` layer toggle (Zap icon) in LayersPanel.
+   - `drawMeteorRadiants()` renders active shower radiants as 8-ray star bursts in amber with glow.
+   - Near-peak showers (daysToPeak ≤ 1) get a larger glow and a "● peak" badge.
+   - Each radiant labeled with shower name + ZHR.
+
+4. **Night mode (red theme for dark adaptation)**:
+   - New `nightMode` store state + `setNightMode()` toggle.
+   - CSS `.night-mode` class on `<html>` that overrides all color variables to red/amber oklch tones.
+   - Overrides slate backgrounds, text colors, borders, scrollbars to preserve rod-cell dark adaptation.
+   - `NightModeClass` client component applies the class via `useEffect`.
+   - MoonStar icon button in toolbar + keyboard shortcut 'M'.
+   - VLM rated night mode 8/10: "Effective dark adaptation support, clear readability, cohesive red theme."
+
+5. **"What's Up Tonight" guided tour** (`SkyTour.tsx`):
+   - Floating "What's Up Tonight" button at top-center of sky map.
+   - Cycles through visible highlights: brightest stars, Moon, planets, Messier objects, meteor showers.
+   - Each stop shows: icon, title, subtitle (mag/alt/constellation), description, Prev/Next/Inspect buttons.
+   - "Inspect" button selects the star in the details panel.
+   - Progress dots for navigation.
+   - 12 stops on a typical night (5 brightest stars + Moon + 3 planets + 3 Messier objects).
+
+**Bug Fixes:**
+- Fixed `Planet` and `Galaxy` lucide-react import errors in SkyTour (replaced with `Orbit` and `Telescope`).
+- Fixed layout.tsx SSR error: moved `NightModeClass` (client component using `useEffect`) to a separate file to avoid importing hooks in a Server Component.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: all features work (night mode toggle, tour navigation, meteor showers in summary panel).
+- Console: clean (no errors).
+- VLM ratings: night mode 8/10, tour 8/10, overall 8-9/10.
+
+Stage Summary:
+- Added 5 new features: meteor shower catalog, meteor radiant rendering, meteor showers in summary panel, night mode (red theme), guided tour.
+- App now covers: stars, Sun/Moon/planets, Messier objects, meteor showers, constellations — with a guided tour and night mode for field use.
+- All features integrate cleanly with the existing render pipeline and store.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- No meteor showers are active on Jul 9 (current date) — feature is correctly empty; would show Perseids in August.
+- Planet magnitudes are approximate (don't account for phase/distance).
+- Could add ISS/satellite tracking and lunar occultation predictions in future.

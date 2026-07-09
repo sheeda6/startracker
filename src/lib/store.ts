@@ -45,6 +45,7 @@ export interface ViewLayers {
   solarSystem: boolean;
   constellationBoundaries: boolean;
   messier: boolean;
+  meteorShowers: boolean;
 }
 
 export interface ViewState {
@@ -87,6 +88,10 @@ interface StarTrackerState {
   layers: ViewLayers;
   setView: (v: Partial<ViewState>) => void;
   setLayers: (l: Partial<ViewLayers>) => void;
+
+  // Night mode (red theme for dark adaptation)
+  nightMode: boolean;
+  setNightMode: (b: boolean) => void;
 
   // UI
   rightPanelOpen: boolean;
@@ -180,9 +185,13 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
     solarSystem: true,
     constellationBoundaries: false,
     messier: true,
+    meteorShowers: true,
   },
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
+
+  nightMode: false,
+  setNightMode: (b) => set({ nightMode: b }),
 
   rightPanelOpen: true,
   bottomPanelOpen: true,

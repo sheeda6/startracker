@@ -1,0 +1,1134 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * SkyMap — Canvas 2D all-sky renderer.
+     5→ *
+     6→ * Stereographic projection centered on the zenith. North up. Renders:
+     7→ *  - sky gradient + horizon ring + cardinal directions
+     8→ *  - altitude/azimuth grid (every 15° alt, 30° az)
+     9→ *  - celestial equator + ecliptic
+    10→ *  - milky way band (procedural)
+    11→ *  - constellation stick figures + names
+    12→ *  - stars (size by magnitude, color by spectral type)
+    13→ *  - star labels when zoomed or hovered
+    14→ *  - selected/hovered highlight rings
+    15→ *  - mouse hover and click → select star
+    16→ *
+    17→ * Rendering targets 60 FPS but only re-renders when time/observer/view changes
+    18→ * (~10 Hz actual physics update; animation frame interpolates).
+    19→ */
+    20→
+    21→import { useEffect, useRef, useCallback, useMemo } from "react";
+    22→import { Download } from "lucide-react";
+    23→import { useStarTracker } from "@/lib/store";
+    24→import { STARS, STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
+    25→import { CONSTELLATION_LINES, CONSTELLATION_MAP } from "@/data/constellations";
+    26→import { MESSIER, MESSIER_TYPE_COLORS, type MessierObject } from "@/data/messier";
+    27→import {
+    28→  buildFrame,
+    29→  transformStar,
+    30→  refract,
+    31→  type FrameContext,
+    32→} from "@/lib/astro/engine";
+    33→import {
+    34→  projectStereographic,
+    35→  unprojectStereographic,
+    36→  magnitudeToRadius,
+    37→  magnitudeToOpacity,
+    38→} from "@/lib/astro/projection";
+    39→import { equatorialToHorizontal } from "@/lib/astro/coordinates";
+    40→import { formatHMS, formatDMS, formatDeg } from "@/lib/astro/time";
+    41→import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
+    42→
+    43→interface RenderedStar {
+    44→  star: Star;
+    45→  x: number;
+    46→  y: number;
+    47→  r: number;
+    48→  alt: number;
+    49→  az: number;
+    50→  visible: boolean;
+    51→}
+    52→
+    53→export function SkyMap() {
+    54→  const canvasRef = useRef<HTMLCanvasElement>(null);
+    55→  const containerRef = useRef<HTMLDivElement>(null);
+    56→  const renderedRef = useRef<RenderedStar[]>([]);
+    57→  const lastTimeRef = useRef<number>(0);
+    58→  const dprRef = useRef<number>(1);
+    59→
+    60→  const observer = useStarTracker((s) => s.observer);
+    61→  const currentTime = useStarTracker((s) => s.currentTime);
+    62→  const clockMode = useStarTracker((s) => s.clockMode);
+    63→  const layers = useStarTracker((s) => s.layers);
+    64→  const view = useStarTracker((s) => s.view);
+    65→  const filters = useStarTracker((s) => s.filters);
+    66→  const selectedHip = useStarTracker((s) => s.selectedHip);
+    67→  const hoveredHip = useStarTracker((s) => s.hoveredHip);
+    68→  const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
+    69→  const setHoveredHip = useStarTracker((s) => s.setHoveredHip);
+    70→  const tickTime = useStarTracker((s) => s.tickTime);
+    71→  const setView = useStarTracker((s) => s.setView);
+    72→
+    73→  // Precomputed frame (memoized per time/observer)
+    74→  const frame: FrameContext = useMemo(
+    75→    () =>
+    76→      buildFrame({
+    77→        date: currentTime,
+    78→        lat: (observer.latDeg * Math.PI) / 180,
+    79→        lon: (observer.lonDeg * Math.PI) / 180,
+    80→        elevationM: observer.elevationM,
+    81→      }),
+    82→    [currentTime, observer.latDeg, observer.lonDeg, observer.elevationM]
+    83→  );
+    84→
+    85→  // Tick the clock in realtime modes
+    86→  useEffect(() => {
+    87→    if (clockMode === "paused" || clockMode === "custom") return;
+    88→    const interval = setInterval(() => {
+    89→      tickTime(100);
+    90→    }, 100);
+    91→    return () => clearInterval(interval);
+    92→  }, [clockMode, tickTime]);
+    93→
+    94→  // Resize handling
+    95→  useEffect(() => {
+    96→    const onResize = () => {
+    97→      const canvas = canvasRef.current;
+    98→      const container = containerRef.current;
+    99→      if (!canvas || !container) return;
+   100→      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+   101→      dprRef.current = dpr;
+   102→      const w = container.clientWidth;
+   103→      const h = container.clientHeight;
+   104→      canvas.width = Math.floor(w * dpr);
+   105→      canvas.height = Math.floor(h * dpr);
+   106→      canvas.style.width = w + "px";
+   107→      canvas.style.height = h + "px";
+   108→    };
+   109→    onResize();
+   110→    window.addEventListener("resize", onResize);
+   111→    return () => window.removeEventListener("resize", onResize);
+   112→  }, []);
+   113→
+   114→  // Main render loop — use a ref to hold the latest render fn and a single
+   115→  // rAF loop that reads from it. This avoids re-subscribing on every prop change.
+   116→  const renderRef = useRef<() => void>(() => {});
+   117→
+   118→  // The render function reads current props/state at call time via closure.
+   119→  // We sync it to the ref inside an effect (not during render) to satisfy the
+   120→  // React Compiler's "no ref writes during render" rule.
+   121→  const render = useCallback(() => {
+   122→    const canvas = canvasRef.current;
+   123→    if (!canvas) {
+   124→      return;
+   125→    }
+   126→    const ctx = canvas.getContext("2d");
+   127→    if (!ctx) {
+   128→      return;
+   129→    }
+   130→    const dpr = dprRef.current;
+   131→    const W = canvas.width;
+   132→    const H = canvas.height;
+   133→    const cx = W / 2;
+   134→    const cy = H / 2;
+   135→    const radius = Math.min(W, H) / 2 - 8 * dpr;
+   136→    const scale = Math.min(W, H) / 600;
+   137→    const timeMs = performance.now();
+   138→
+   139→    // 1. Sky background gradient (dark zenith → lighter horizon)
+   140→    const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+   141→    bgGrad.addColorStop(0, "#020412");
+   142→    bgGrad.addColorStop(0.55, "#070d24");
+   143→    bgGrad.addColorStop(1, "#101b3a");
+   144→    ctx.fillStyle = bgGrad;
+   145→    ctx.fillRect(0, 0, W, H);
+   146→
+   147→    // 2. Outside-horizon mask (ground)
+   148→    ctx.save();
+   149→    ctx.beginPath();
+   150→    ctx.rect(0, 0, W, H);
+   151→    ctx.arc(cx, cy, radius, 0, 2 * Math.PI, true);
+   152→    ctx.fillStyle = "rgba(8, 5, 2, 0.92)";
+   153→    ctx.fill("evenodd");
+   154→    ctx.restore();
+   155→
+   156→    // 3. Milky Way band (procedural)
+   157→    if (layers.milkyWay) {
+   158→      drawMilkyWay(ctx, cx, cy, radius, frame, layers.refraction, view.rotation);
+   159→    }
+   160→
+   161→    // 4. Alt/Az grid
+   162→    if (layers.grid) {
+   163→      drawAltAzGrid(ctx, cx, cy, radius, view.rotation, dpr);
+   164→    }
+   165→
+   166→    // 5. Celestial equator
+   167→    if (layers.equator) {
+   168→      drawCelestialCircle(ctx, cx, cy, radius, frame, 0, view.rotation, layers.refraction, "#3b6ea5", 1 * dpr);
+   169→    }
+   170→    // 6. Ecliptic
+   171→    if (layers.ecliptic) {
+   172→      drawCelestialCircle(ctx, cx, cy, radius, frame, frame.epsTrue, view.rotation, layers.refraction, "#a87c2f", 1 * dpr);
+   173→    }
+   174→
+   175→    // 7. Constellation lines
+   176→    const renderedStars: RenderedStar[] = [];
+   177→    if (layers.constellations) {
+   178→      drawConstellationLines(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, selectedHip);
+   179→    }
+   180→
+   181→    // 8. Stars
+   182→    const sinPhi = frame.sinLat;
+   183→    const cosPhi = frame.cosLat;
+   184→    const latRad = (observer.latDeg * Math.PI) / 180;
+   185→
+   186→    // Sort by magnitude (brightest last so they render on top)
+   187→    const sortedStars = [...STARS].sort((a, b) => b.mag - a.mag);
+   188→
+   189→    for (const star of sortedStars) {
+   190→      if (star.mag > filters.maxMagnitude) continue;
+   191→      const tr = transformStar(star.ra, star.dec, frame, latRad);
+   192→      let alt = tr.horizontal.alt;
+   193→      const az = tr.horizontal.az;
+   194→      if (layers.refraction && alt < Math.PI / 2) {
+   195→        alt = refract(alt); // observed altitude
+   196→      }
+   197→      if (alt <= -0.02) continue; // below horizon
+   198→
+   199→      const proj = projectStereographic({
+   200→        cx,
+   201→        cy,
+   202→        radius,
+   203→        alt,
+   204→        az: az + view.rotation,
+   205→      });
+   206→
+   207→      // Apply constellation filter
+   208→      if (filters.constellation !== "all" && star.constellation !== filters.constellation) {
+   209→        continue;
+   210→      }
+   211→      // Apply visible-only
+   212→      if (filters.visibleOnly && alt < 0.05) continue;
+   213→
+   214→      renderedStars.push({
+   215→        star,
+   216→        x: proj.x,
+   217→        y: proj.y,
+   218→        r: magnitudeToRadius(star.mag, scale),
+   219→        alt,
+   220→        az,
+   221→        visible: proj.visible,
+   222→      });
+   223→
+   224→      // Apply spectral color
+   225→      const [cr, cg, cb] = spectralColor(star.spectral);
+   226→      const baseAlpha = magnitudeToOpacity(star.mag);
+   227→      const r = magnitudeToRadius(star.mag, scale);
+   228→
+   229→      // Subtle twinkle: per-star phase based on HIP, modulated by time.
+   230→      // Amplitude is small (±8%) and only for stars below the refraction layer
+   231→      // so the effect is atmospheric without being distracting.
+   232→      const twinklePhase = (star.hip % 100) / 100 * Math.PI * 2;
+   233→      const twinkle = 1 + 0.08 * Math.sin(timeMs / 800 + twinklePhase);
+   234→      const alpha = baseAlpha * twinkle;
+   235→
+   236→      // Glow for bright stars
+   237→      if (star.mag < 1.5) {
+   238→        const glowR = r * 6;
+   239→        const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, glowR);
+   240→        glow.addColorStop(0, `rgba(${cr},${cg},${cb},${alpha * 0.45})`);
+   241→        glow.addColorStop(0.4, `rgba(${cr},${cg},${cb},${alpha * 0.15})`);
+   242→        glow.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+   243→        ctx.fillStyle = glow;
+   244→        ctx.beginPath();
+   245→        ctx.arc(proj.x, proj.y, glowR, 0, 2 * Math.PI);
+   246→        ctx.fill();
+   247→      }
+   248→
+   249→      // Star body — white-hot core for bright stars
+   250→      ctx.beginPath();
+   251→      ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
+   252→      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+   253→      ctx.fill();
+   254→
+   255→      // Inner bright core for very bright stars (white center)
+   256→      if (star.mag < 1.0) {
+   257→        ctx.beginPath();
+   258→        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.7})`;
+   259→        ctx.arc(proj.x, proj.y, r * 0.4, 0, 2 * Math.PI);
+   260→        ctx.fill();
+   261→      }
+   262→
+   263→      // Diffraction spikes for very bright stars
+   264→      if (star.mag < 0.5) {
+   265→        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * 0.5})`;
+   266→        ctx.lineWidth = 0.6 * dpr;
+   267→        const spike = r * 4.5;
+   268→        ctx.beginPath();
+   269→        ctx.moveTo(proj.x - spike, proj.y);
+   270→        ctx.lineTo(proj.x + spike, proj.y);
+   271→        ctx.moveTo(proj.x, proj.y - spike);
+   272→        ctx.lineTo(proj.x, proj.y + spike);
+   273→        ctx.stroke();
+   274→      }
+   275→    }
+   276→
+   277→    // 9. Star labels (with collision avoidance)
+   278→    if (layers.starLabels) {
+   279→      ctx.font = `${11 * dpr}px ui-monospace, monospace`;
+   280→      ctx.textAlign = "left";
+   281→      ctx.textBaseline = "middle";
+   282→      // Collect candidate labels sorted by magnitude (brightest first)
+   283→      const candidates = renderedStars
+   284→        .filter((rs) => {
+   285→          const isSelected = rs.star.hip === selectedHip;
+   286→          const isHovered = rs.star.hip === hoveredHip;
+   287→          if (rs.star.mag > 2.5 && !isSelected && !isHovered) return false;
+   288→          const label = rs.star.name || rs.star.bayer;
+   289→          return !!label;
+   290→        })
+   291→        .sort((a, b) => a.star.mag - b.star.mag);
+   292→
+   293→      // Simple collision avoidance: track placed label rectangles
+   294→      const placed: { x: number; y: number; w: number; h: number }[] = [];
+   295→      const labelH = 12 * dpr;
+   296→      const padX = 2 * dpr;
+   297→      const padY = 3 * dpr;
+   298→
+   299→      for (const rs of candidates) {
+   300→        const isSelected = rs.star.hip === selectedHip;
+   301→        const isHovered = rs.star.hip === hoveredHip;
+   302→        const label = rs.star.name || rs.star.bayer || "";
+   303→        const labelW = ctx.measureText(label).width + rs.r + 4 * dpr;
+   304→        const lx = rs.x + rs.r + 3 * dpr;
+   305→        const ly = rs.y;
+   306→        const box = { x: lx - padX, y: ly - labelH / 2 - padY, w: labelW, h: labelH + padY * 2 };
+   307→
+   308→        // Check collision with already-placed labels
+   309→        let collides = false;
+   310→        if (!isSelected && !isHovered) {
+   311→          for (const p of placed) {
+   312→            if (
+   313→              box.x < p.x + p.w &&
+   314→              box.x + box.w > p.x &&
+   315→              box.y < p.y + p.h &&
+   316→              box.y + box.h > p.y
+   317→            ) {
+   318→              collides = true;
+   319→              break;
+   320→            }
+   321→          }
+   322→        }
+   323→        if (collides) continue;
+   324→        placed.push(box);
+   325→
+   326→        // Draw label background for selected/hovered
+   327→        if (isSelected || isHovered) {
+   328→          ctx.fillStyle = isSelected ? "rgba(251, 191, 36, 0.15)" : "rgba(186, 230, 253, 0.12)";
+   329→          ctx.fillRect(box.x, box.y, box.w, box.h);
+   330→        }
+   331→
+   332→        ctx.fillStyle = isSelected
+   333→          ? "#fde68a"
+   334→          : isHovered
+   335→          ? "#e0e7ff"
+   336→          : "rgba(220, 230, 255, 0.82)";
+   337→        ctx.fillText(label, lx, ly);
+   338→      }
+   339→    }
+   340→
+   341→    // 9b. Solar system bodies (Sun, Moon, planets)
+   342→    if (layers.solarSystem) {
+   343→      drawSolarSystem(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
+   344→    }
+   345→
+   346→    // 9c. Messier deep-sky objects
+   347→    if (layers.messier) {
+   348→      drawMessier(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
+   349→    }
+   350→
+   351→    // 10. Hovered star ring
+   352→    if (hoveredHip != null) {
+   353→      const rs = renderedStars.find((s) => s.star.hip === hoveredHip);
+   354→      if (rs) {
+   355→        ctx.strokeStyle = "rgba(186, 230, 253, 0.9)";
+   356→        ctx.lineWidth = 1.2 * dpr;
+   357→        ctx.beginPath();
+   358→        ctx.arc(rs.x, rs.y, rs.r + 5 * dpr, 0, 2 * Math.PI);
+   359→        ctx.stroke();
+   360→      }
+   361→    }
+   362→    // 11. Selected star ring
+   363→    if (selectedHip != null) {
+   364→      const rs = renderedStars.find((s) => s.star.hip === selectedHip);
+   365→      if (rs) {
+   366→        ctx.strokeStyle = "#fbbf24";
+   367→        ctx.lineWidth = 1.6 * dpr;
+   368→        ctx.setLineDash([4 * dpr, 3 * dpr]);
+   369→        ctx.beginPath();
+   370→        ctx.arc(rs.x, rs.y, rs.r + 7 * dpr, 0, 2 * Math.PI);
+   371→        ctx.stroke();
+   372→        ctx.setLineDash([]);
+   373→        // Crosshair
+   374→        ctx.strokeStyle = "rgba(251, 191, 36, 0.5)";
+   375→        ctx.lineWidth = 0.8 * dpr;
+   376→        ctx.beginPath();
+   377→        ctx.moveTo(rs.x - 18 * dpr, rs.y);
+   378→        ctx.lineTo(rs.x - 10 * dpr, rs.y);
+   379→        ctx.moveTo(rs.x + 10 * dpr, rs.y);
+   380→        ctx.lineTo(rs.x + 18 * dpr, rs.y);
+   381→        ctx.moveTo(rs.x, rs.y - 18 * dpr);
+   382→        ctx.lineTo(rs.x, rs.y - 10 * dpr);
+   383→        ctx.moveTo(rs.x, rs.y + 10 * dpr);
+   384→        ctx.lineTo(rs.x, rs.y + 18 * dpr);
+   385→        ctx.stroke();
+   386→      }
+   387→    }
+   388→
+   389→    // 12. Cardinal directions
+   390→    if (layers.cardinalDirections) {
+   391→      drawCardinalDirections(ctx, cx, cy, radius, view.rotation, dpr);
+   392→    }
+   393→
+   394→    // 13. Zenith marker
+   395→    ctx.fillStyle = "rgba(251, 191, 36, 0.85)";
+   396→    ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+   397→    ctx.textAlign = "center";
+   398→    ctx.textBaseline = "middle";
+   399→    ctx.fillText("Z", cx, cy - 6 * dpr);
+   400→    ctx.strokeStyle = "rgba(251, 191, 36, 0.4)";
+   401→    ctx.lineWidth = 0.6 * dpr;
+   402→    ctx.beginPath();
+   403→    ctx.arc(cx, cy, 4 * dpr, 0, 2 * Math.PI);
+   404→    ctx.stroke();
+   405→
+   406→    renderedRef.current = renderedStars;
+   407→  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime]);
+   408→
+   409→  // Sync the latest render closure into the ref (inside an effect, not during render).
+   410→  useEffect(() => {
+   411→    renderRef.current = render;
+   412→  }, [render]);
+   413→
+   414→  // Single rAF loop — reads the latest render fn from the ref each frame.
+   415→  useEffect(() => {
+   416→    let raf = 0;
+   417→    const tick = () => {
+   418→      renderRef.current();
+   419→      raf = requestAnimationFrame(tick);
+   420→    };
+   421→    raf = requestAnimationFrame(tick);
+   422→    return () => cancelAnimationFrame(raf);
+   423→  }, []);
+   424→
+   425→  // Mouse interaction
+   426→  const handleMouseMove = useCallback(
+   427→    (e: React.MouseEvent<HTMLCanvasElement>) => {
+   428→      const canvas = canvasRef.current;
+   429→      if (!canvas) return;
+   430→      const rect = canvas.getBoundingClientRect();
+   431→      const dpr = dprRef.current;
+   432→      const x = (e.clientX - rect.left) * dpr;
+   433→      const y = (e.clientY - rect.top) * dpr;
+   434→      // Find nearest star within tolerance
+   435→      let best: RenderedStar | null = null;
+   436→      let bestDist = 16 * dpr;
+   437→      for (const rs of renderedRef.current) {
+   438→        const d = Math.hypot(rs.x - x, rs.y - y);
+   439→        if (d < bestDist) {
+   440→          bestDist = d;
+   441→          best = rs;
+   442→        }
+   443→      }
+   444→      setHoveredHip(best ? best.star.hip : null);
+   445→      canvas.style.cursor = best ? "pointer" : "crosshair";
+   446→    },
+   447→    [setHoveredHip]
+   448→  );
+   449→
+   450→  const handleClick = useCallback(
+   451→    (e: React.MouseEvent<HTMLCanvasElement>) => {
+   452→      const canvas = canvasRef.current;
+   453→      if (!canvas) return;
+   454→      const rect = canvas.getBoundingClientRect();
+   455→      const dpr = dprRef.current;
+   456→      const x = (e.clientX - rect.left) * dpr;
+   457→      const y = (e.clientY - rect.top) * dpr;
+   458→      let best: RenderedStar | null = null;
+   459→      let bestDist = 16 * dpr;
+   460→      for (const rs of renderedRef.current) {
+   461→        const d = Math.hypot(rs.x - x, rs.y - y);
+   462→        if (d < bestDist) {
+   463→          bestDist = d;
+   464→          best = rs;
+   465→        }
+   466→      }
+   467→      if (best) {
+   468→        setSelectedHip(best.star.hip);
+   469→      } else {
+   470→        // If clicking empty sky, deselect
+   471→        setSelectedHip(null);
+   472→      }
+   473→    },
+   474→    [setSelectedHip]
+   475→  );
+   476→
+   477→  const handleWheel = useCallback(
+   478→    (e: React.WheelEvent<HTMLCanvasElement>) => {
+   479→      // Zoom in/out
+   480→      const delta = -e.deltaY * 0.001;
+   481→      setView({ zoom: Math.max(0.6, Math.min(4, view.zoom + delta)) });
+   482→    },
+   483→    [view.zoom, setView]
+   484→  );
+   485→
+   486→  const handleExport = useCallback(() => {
+   487→    const canvas = canvasRef.current;
+   488→    if (!canvas) return;
+   489→    // Create a temporary link and download the canvas as PNG
+   490→    const link = document.createElement("a");
+   491→    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+   492→    link.download = `startracker-${ts}.png`;
+   493→    link.href = canvas.toDataURL("image/png");
+   494→    link.click();
+   495→  }, []);
+   496→
+   497→  return (
+   498→    <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-lg">
+   499→      <canvas
+   500→        ref={canvasRef}
+   501→        className="block h-full w-full"
+   502→        onMouseMove={handleMouseMove}
+   503→        onMouseLeave={() => setHoveredHip(null)}
+   504→        onClick={handleClick}
+   505→        onWheel={handleWheel}
+   506→        aria-label="Interactive sky map. Click a star to view details."
+   507→      />
+   508→      {/* Export button */}
+   509→      <button
+   510→        onClick={handleExport}
+   511→        title="Export sky map as PNG"
+   512→        aria-label="Export sky map as PNG"
+   513→        className="absolute left-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-slate-950/80 text-slate-400 backdrop-blur transition-colors hover:bg-slate-800 hover:text-amber-300"
+   514→      >
+   515→        <Download className="h-3.5 w-3.5" />
+   516→      </button>
+   517→      {/* Hover tooltip */}
+   518→      {hoveredHip != null && STARS_BY_HIP.has(hoveredHip) && (
+   519→        <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/15 bg-slate-950/85 px-3 py-2 text-xs text-slate-100 shadow-xl backdrop-blur">
+   520→          <div className="font-semibold text-amber-300">
+   521→            {STARS_BY_HIP.get(hoveredHip)?.name || STARS_BY_HIP.get(hoveredHip)?.bayer || `HIP ${hoveredHip}`}
+   522→          </div>
+   523→          <div className="mt-0.5 text-[10px] text-slate-300">
+   524→            {STARS_BY_HIP.get(hoveredHip)?.spectral} · mag {STARS_BY_HIP.get(hoveredHip)?.mag.toFixed(2)}
+   525→          </div>
+   526→        </div>
+   527→      )}
+   528→    </div>
+   529→  );
+   530→}
+   531→
+   532→// ─── Drawing helpers ───────────────────────────────────────────────────────
+   533→
+   534→function drawAltAzGrid(
+   535→  ctx: CanvasRenderingContext2D,
+   536→  cx: number,
+   537→  cy: number,
+   538→  radius: number,
+   539→  rotation: number,
+   540→  dpr: number
+   541→) {
+   542→  ctx.strokeStyle = "rgba(120, 150, 200, 0.18)";
+   543→  ctx.lineWidth = 0.6 * dpr;
+   544→  ctx.setLineDash([2 * dpr, 4 * dpr]);
+   545→  // Altitude rings every 15°
+   546→  for (let altDeg = 15; altDeg < 90; altDeg += 15) {
+   547→    const alt = (altDeg * Math.PI) / 180;
+   548→    const r = 2 * radius * Math.tan((Math.PI / 2 - alt) / 2);
+   549→    ctx.beginPath();
+   550→    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+   551→    ctx.stroke();
+   552→  }
+   553→  // Azimuth lines every 30°
+   554→  for (let azDeg = 0; azDeg < 360; azDeg += 30) {
+   555→    const az = (azDeg * Math.PI) / 180 + rotation;
+   556→    ctx.beginPath();
+   557→    ctx.moveTo(cx, cy);
+   558→    ctx.lineTo(cx + radius * Math.sin(az), cy - radius * Math.cos(az));
+   559→    ctx.stroke();
+   560→  }
+   561→  ctx.setLineDash([]);
+   562→}
+   563→
+   564→function drawCardinalDirections(
+   565→  ctx: CanvasRenderingContext2D,
+   566→  cx: number,
+   567→  cy: number,
+   568→  radius: number,
+   569→  rotation: number,
+   570→  dpr: number
+   571→) {
+   572→  ctx.font = `bold ${14 * dpr}px ui-sans-serif, system-ui`;
+   573→  ctx.textAlign = "center";
+   574→  ctx.textBaseline = "middle";
+   575→  const dirs = [
+   576→    { label: "N", az: 0, color: "#f87171" },
+   577→    { label: "E", az: Math.PI / 2, color: "#93c5fd" },
+   578→    { label: "S", az: Math.PI, color: "#fcd34d" },
+   579→    { label: "W", az: (3 * Math.PI) / 2, color: "#86efac" },
+   580→  ];
+   581→  for (const d of dirs) {
+   582→    const a = d.az + rotation;
+   583→    const x = cx + (radius + 16 * dpr) * Math.sin(a);
+   584→    const y = cy - (radius + 16 * dpr) * Math.cos(a);
+   585→    // Badge
+   586→    ctx.fillStyle = "rgba(2, 6, 23, 0.85)";
+   587→    ctx.beginPath();
+   588→    ctx.arc(x, y, 12 * dpr, 0, 2 * Math.PI);
+   589→    ctx.fill();
+   590→    ctx.fillStyle = d.color;
+   591→    ctx.fillText(d.label, x, y);
+   592→  }
+   593→}
+   594→
+   595→/**
+   596→ * Draw a great circle on the celestial sphere (e.g. equator, ecliptic)
+   597→ * defined by its pole declination relative to the celestial pole.
+   598→ * `inclination` is the obliquity for the ecliptic (0 for the equator).
+   599→ */
+   600→function drawCelestialCircle(
+   601→  ctx: CanvasRenderingContext2D,
+   602→  cx: number,
+   603→  cy: number,
+   604→  radius: number,
+   605→  frame: FrameContext,
+   606→  inclination: number,
+   607→  rotation: number,
+   608→  refraction: boolean,
+   609→  color: string,
+   610→  lineWidth: number
+   611→) {
+   612→  ctx.strokeStyle = color;
+   613→  ctx.lineWidth = lineWidth;
+   614→  ctx.beginPath();
+   615→  let started = false;
+   616→  const N = 360;
+   617→  for (let i = 0; i <= N; i++) {
+   618→    const lon = (i / N) * 2 * Math.PI;
+   619→    // Point on the circle: equator (dec=0, ra=lon) or ecliptic
+   620→    let ra: number, dec: number;
+   621→    if (inclination === 0) {
+   622→      ra = lon;
+   623→      dec = 0;
+   624→    } else {
+   625→      // Ecliptic circle: convert ecliptic longitude to equatorial
+   626→      const sinEps = Math.sin(inclination);
+   627→      const cosEps = Math.cos(inclination);
+   628→      const sinBeta = 0; // ecliptic latitude 0
+   629→      const cosBeta = 1;
+   630→      const sinLon = Math.sin(lon);
+   631→      const cosLon = Math.cos(lon);
+   632→      const sinDec = sinBeta * cosEps + cosBeta * sinEps * sinLon;
+   633→      dec = Math.asin(sinDec);
+   634→      ra = Math.atan2(sinLon * cosEps - (sinBeta / cosBeta) * sinEps, cosLon);
+   635→      if (ra < 0) ra += 2 * Math.PI;
+   636→    }
+   637→    const tr = transformStar(ra, dec, frame, Math.asin(frame.sinLat));
+   638→    let alt = tr.horizontal.alt;
+   639→    const az = tr.horizontal.az;
+   640→    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   641→    if (alt < -0.02) {
+   642→      started = false;
+   643→      continue;
+   644→    }
+   645→    const p = projectStereographic({ cx, cy, radius, alt, az: az + rotation });
+   646→    if (!started) {
+   647→      ctx.moveTo(p.x, p.y);
+   648→      started = true;
+   649→    } else {
+   650→      ctx.lineTo(p.x, p.y);
+   651→    }
+   652→  }
+   653→  ctx.stroke();
+   654→}
+   655→
+   656→/**
+   657→ * Draw all constellation stick-figure lines. Only stars present in the catalog
+   658→ * are projected; lines with missing stars are skipped.
+   659→ */
+   660→function drawConstellationLines(
+   661→  ctx: CanvasRenderingContext2D,
+   662→  cx: number,
+   663→  cy: number,
+   664→  radius: number,
+   665→  frame: FrameContext,
+   666→  rotation: number,
+   667→  refraction: boolean,
+   668→  dpr: number,
+   669→  selectedHip: number | null
+   670→) {
+   671→  // Determine the constellation of the selected star (for highlighting)
+   672→  let highlightAbbr: string | null = null;
+   673→  if (selectedHip != null) {
+   674→    const sel = STARS_BY_HIP.get(selectedHip);
+   675→    if (sel) highlightAbbr = sel.constellation;
+   676→  }
+   677→
+   678→  const latRad = Math.asin(frame.sinLat);
+   679→
+   680→  for (const [abbr, lines] of Object.entries(CONSTELLATION_LINES)) {
+   681→    const isHighlighted = abbr === highlightAbbr;
+   682→    ctx.strokeStyle = isHighlighted
+   683→      ? "rgba(251, 191, 36, 0.9)"
+   684→      : "rgba(125, 211, 252, 0.45)";
+   685→    ctx.lineWidth = (isHighlighted ? 1.8 : 1.0) * dpr;
+   686→    ctx.lineCap = "round";
+   687→    if (isHighlighted) {
+   688→      ctx.shadowColor = "rgba(251, 191, 36, 0.4)";
+   689→      ctx.shadowBlur = 6 * dpr;
+   690→    } else {
+   691→      ctx.shadowBlur = 0;
+   692→    }
+   693→    for (const [hipA, hipB] of lines) {
+   694→      const sA = STARS_BY_HIP.get(hipA);
+   695→      const sB = STARS_BY_HIP.get(hipB);
+   696→      if (!sA || !sB) continue;
+   697→      const trA = transformStar(sA.ra, sA.dec, frame, latRad);
+   698→      const trB = transformStar(sB.ra, sB.dec, frame, latRad);
+   699→      let altA = trA.horizontal.alt;
+   700→      let altB = trB.horizontal.alt;
+   701→      if (refraction) {
+   702→        if (altA < Math.PI / 2) altA = refract(altA);
+   703→        if (altB < Math.PI / 2) altB = refract(altB);
+   704→      }
+   705→      if (altA < -0.02 || altB < -0.02) continue;
+   706→      const pA = projectStereographic({
+   707→        cx, cy, radius, alt: altA, az: trA.horizontal.az + rotation,
+   708→      });
+   709→      const pB = projectStereographic({
+   710→        cx, cy, radius, alt: altB, az: trB.horizontal.az + rotation,
+   711→      });
+   712→      ctx.beginPath();
+   713→      ctx.moveTo(pA.x, pA.y);
+   714→      ctx.lineTo(pB.x, pB.y);
+   715→      ctx.stroke();
+   716→    }
+   717→    ctx.shadowBlur = 0;
+   718→    // Constellation name label at the centroid of its first line
+   719→    if (lines.length > 0) {
+   720→      const [h0, h1] = lines[0];
+   721→      const s0 = STARS_BY_HIP.get(h0);
+   722→      const s1 = STARS_BY_HIP.get(h1);
+   723→      if (s0 && s1) {
+   724→        const tr0 = transformStar(s0.ra, s0.dec, frame, latRad);
+   725→        if (tr0.horizontal.alt > 0.05) {
+   726→          const p = projectStereographic({
+   727→            cx, cy, radius,
+   728→            alt: tr0.horizontal.alt,
+   729→            az: tr0.horizontal.az + rotation,
+   730→          });
+   731→          const info = CONSTELLATION_MAP[abbr];
+   732→          if (info) {
+   733→            ctx.font = `${isHighlighted ? "bold " : ""}${10 * dpr}px ui-sans-serif, system-ui`;
+   734→            ctx.fillStyle = isHighlighted ? "rgba(251, 191, 36, 0.95)" : "rgba(147, 197, 253, 0.55)";
+   735→            ctx.textAlign = "center";
+   736→            ctx.textBaseline = "middle";
+   737→            ctx.fillText(info.abbr, p.x, p.y - 14 * dpr);
+   738→          }
+   739→        }
+   740→      }
+   741→    }
+   742→  }
+   743→}
+   744→
+   745→/**
+   746→ * Procedural Milky Way band. Sample along the galactic equator (b=0) and draw
+   747→ * a soft glowing band; offset the band by varying density along the plane.
+   748→ */
+   749→function drawMilkyWay(
+   750→  ctx: CanvasRenderingContext2D,
+   751→  cx: number,
+   752→  cy: number,
+   753→  radius: number,
+   754→  frame: FrameContext,
+   755→  refraction: boolean,
+   756→  rotation: number
+   757→) {
+   758→  ctx.save();
+   759→  ctx.globalCompositeOperation = "lighter";
+   760→  const latRad = Math.asin(frame.sinLat);
+   761→  const GAL_R = [
+   762→    [-0.054875539, -0.87343709, -0.48383499],
+   763→    [0.494109453, -0.44482963, 0.74698224],
+   764→    [-0.867666136, -0.19807639, 0.45598377],
+   765→  ];
+   766→  // Galactic → equatorial (transpose of equatorial→galactic)
+   767→  function galToEquatorial(l: number, b: number): { ra: number; dec: number } {
+   768→    const cl = Math.cos(l);
+   769→    const sl = Math.sin(l);
+   770→    const cb = Math.cos(b);
+   771→    const sb = Math.sin(b);
+   772→    const x = cb * cl;
+   773→    const y = cb * sl;
+   774→    const z = sb;
+   775→    // Apply transpose of GAL_R
+   776→    const eq = [
+   777→      GAL_R[0][0] * x + GAL_R[1][0] * y + GAL_R[2][0] * z,
+   778→      GAL_R[0][1] * x + GAL_R[1][1] * y + GAL_R[2][1] * z,
+   779→      GAL_R[0][2] * x + GAL_R[1][2] * y + GAL_R[2][2] * z,
+   780→    ];
+   781→    const dec = Math.asin(eq[2]);
+   782→    let ra = Math.atan2(eq[1], eq[0]);
+   783→    if (ra < 0) ra += 2 * Math.PI;
+   784→    return { ra, dec };
+   785→  }
+   786→
+   787→  const steps = 180;
+   788→  for (let i = 0; i < steps; i++) {
+   789→    const l = (i / steps) * 2 * Math.PI;
+   790→    // density variation — brighter near galactic center (l~0) and anti-center
+   791→    const density = Math.exp(-Math.pow(((l + Math.PI) % (2 * Math.PI)) - Math.PI, 2) / 2) * 0.6 + 0.2;
+   792→    for (let bDeg = -8; bDeg <= 8; bDeg += 2) {
+   793→      const b = (bDeg * Math.PI) / 180;
+   794→      const { ra, dec } = galToEquatorial(l, b);
+   795→      const tr = transformStar(ra, dec, frame, latRad);
+   796→      let alt = tr.horizontal.alt;
+   797→      if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   798→      if (alt < 0) continue;
+   799→      const p = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+   800→      const alpha = density * (1 - Math.abs(bDeg) / 9) * 0.12;
+   801→      const r = 18;
+   802→      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+   803→      g.addColorStop(0, `rgba(190, 200, 255, ${alpha})`);
+   804→      g.addColorStop(1, "rgba(190, 200, 255, 0)");
+   805→      ctx.fillStyle = g;
+   806→      ctx.beginPath();
+   807→      ctx.arc(p.x, p.y, r, 0, 2 * Math.PI);
+   808→      ctx.fill();
+   809→    }
+   810→  }
+   811→  ctx.restore();
+   812→}
+   813→
+   814→/**
+   815→ * Draw the Sun, Moon, and naked-eye planets on the sky map.
+   816→ * The Sun is a golden disc with rays; the Moon shows its current phase
+   817→ * (shaded dark side); planets use their traditional color + symbol.
+   818→ */
+   819→function drawSolarSystem(
+   820→  ctx: CanvasRenderingContext2D,
+   821→  cx: number,
+   822→  cy: number,
+   823→  radius: number,
+   824→  frame: FrameContext,
+   825→  rotation: number,
+   826→  refraction: boolean,
+   827→  dpr: number,
+   828→  date: Date,
+   829→  latRad: number
+   830→) {
+   831→  // Planets
+   832→  const planets = planetPositions(date);
+   833→  for (const p of planets) {
+   834→    const tr = transformStar(p.ra, p.dec, frame, latRad);
+   835→    let alt = tr.horizontal.alt;
+   836→    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   837→    if (alt < -0.02) continue;
+   838→    const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+   839→    const r = 4 * dpr;
+   840→    // Glow
+   841→    const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 4);
+   842→    glow.addColorStop(0, p.color + "aa");
+   843→    glow.addColorStop(1, p.color + "00");
+   844→    ctx.fillStyle = glow;
+   845→    ctx.beginPath();
+   846→    ctx.arc(proj.x, proj.y, r * 4, 0, 2 * Math.PI);
+   847→    ctx.fill();
+   848→    // Body
+   849→    ctx.fillStyle = p.color;
+   850→    ctx.beginPath();
+   851→    ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+   852→    ctx.fill();
+   853→    // Symbol + name
+   854→    ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+   855→    ctx.textAlign = "left";
+   856→    ctx.textBaseline = "middle";
+   857→    ctx.fillStyle = p.color;
+   858→    ctx.fillText(`${p.symbol} ${p.name}`, proj.x + r + 4 * dpr, proj.y);
+   859→  }
+   860→
+   861→  // Sun
+   862→  const sun = sunPosition(date);
+   863→  {
+   864→    const tr = transformStar(sun.ra, sun.dec, frame, latRad);
+   865→    let alt = tr.horizontal.alt;
+   866→    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   867→    if (alt > -0.02) {
+   868→      const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+   869→      const r = 8 * dpr;
+   870→      // Outer corona glow
+   871→      const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 5);
+   872→      glow.addColorStop(0, "rgba(253, 224, 71, 0.6)");
+   873→      glow.addColorStop(0.4, "rgba(251, 146, 60, 0.25)");
+   874→      glow.addColorStop(1, "rgba(251, 146, 60, 0)");
+   875→      ctx.fillStyle = glow;
+   876→      ctx.beginPath();
+   877→      ctx.arc(proj.x, proj.y, r * 5, 0, 2 * Math.PI);
+   878→      ctx.fill();
+   879→      // Rays
+   880→      ctx.strokeStyle = "rgba(253, 224, 71, 0.7)";
+   881→      ctx.lineWidth = 1.2 * dpr;
+   882→      ctx.lineCap = "round";
+   883→      for (let i = 0; i < 8; i++) {
+   884→        const a = (i / 8) * 2 * Math.PI;
+   885→        ctx.beginPath();
+   886→        ctx.moveTo(proj.x + Math.cos(a) * r * 1.3, proj.y + Math.sin(a) * r * 1.3);
+   887→        ctx.lineTo(proj.x + Math.cos(a) * r * 2.4, proj.y + Math.sin(a) * r * 2.4);
+   888→        ctx.stroke();
+   889→      }
+   890→      // Disc
+   891→      const disc = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r);
+   892→      disc.addColorStop(0, "#fffbeb");
+   893→      disc.addColorStop(0.6, "#fcd34d");
+   894→      disc.addColorStop(1, "#f59e0b");
+   895→      ctx.fillStyle = disc;
+   896→      ctx.beginPath();
+   897→      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+   898→      ctx.fill();
+   899→      // Label
+   900→      ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+   901→      ctx.textAlign = "left";
+   902→      ctx.textBaseline = "middle";
+   903→      ctx.fillStyle = "#fde68a";
+   904→      ctx.fillText("☉ Sun", proj.x + r + 6 * dpr, proj.y);
+   905→    }
+   906→  }
+   907→
+   908→  // Moon
+   909→  const moon = moonPosition(date);
+   910→  {
+   911→    const tr = transformStar(moon.ra, moon.dec, frame, latRad);
+   912→    let alt = tr.horizontal.alt;
+   913→    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   914→    if (alt > -0.02) {
+   915→      const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+   916→      const r = 7 * dpr;
+   917→      const phase = moonPhase(date);
+   918→      // Soft glow
+   919→      const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 3);
+   920→      glow.addColorStop(0, "rgba(226, 232, 240, 0.3)");
+   921→      glow.addColorStop(1, "rgba(226, 232, 240, 0)");
+   922→      ctx.fillStyle = glow;
+   923→      ctx.beginPath();
+   924→      ctx.arc(proj.x, proj.y, r * 3, 0, 2 * Math.PI);
+   925→      ctx.fill();
+   926→      // Lit disc
+   927→      ctx.fillStyle = "#e2e8f0";
+   928→      ctx.beginPath();
+   929→      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+   930→      ctx.fill();
+   931→      // Dark side (shadow) — drawn as an offset circle
+   932→      const illum = phase.illumination;
+   933→      const offset = (1 - 2 * illum) * r;
+   934→      ctx.save();
+   935→      ctx.beginPath();
+   936→      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+   937→      ctx.clip();
+   938→      ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+   939→      ctx.beginPath();
+   940→      if (phase.waxing) {
+   941→        ctx.arc(proj.x - r + offset * 2, proj.y, r, 0, 2 * Math.PI);
+   942→      } else {
+   943→        ctx.arc(proj.x + r - offset * 2, proj.y, r, 0, 2 * Math.PI);
+   944→      }
+   945→      ctx.fill();
+   946→      ctx.restore();
+   947→      // Label
+   948→      ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+   949→      ctx.textAlign = "left";
+   950→      ctx.textBaseline = "middle";
+   951→      ctx.fillStyle = "#e2e8f0";
+   952→      ctx.fillText(`☽ Moon ${(illum * 100).toFixed(0)}%`, proj.x + r + 6 * dpr, proj.y);
+   953→    }
+   954→  }
+   955→}
+   956→
+   957→/**
+   958→ * Draw Messier catalog deep-sky objects on the sky map.
+   959→ *
+   960→ * Each object is rendered with a type-specific glyph:
+   961→ *  - galaxy         → faint amber tilted ellipse (suggesting a disk)
+   962→ *  - nebula         → small dashed green circle
+   963→ *  - planetary      → small cyan ring (annulus)
+   964→ *  - open cluster   → cluster of tiny yellow dots arranged in a ring
+   965→ *  - globular       → fuzzy orange circle (radial gradient)
+   966→ *  - supernova      → tiny red remnant dot with cross spikes
+   967→ *
+   968→ * Below-horizon objects are skipped. A small "M{number}" label is drawn next
+   969→ * to each visible object, color-coded by type.
+   970→ */
+   971→function drawMessier(
+   972→  ctx: CanvasRenderingContext2D,
+   973→  cx: number,
+   974→  cy: number,
+   975→  radius: number,
+   976→  frame: FrameContext,
+   977→  rotation: number,
+   978→  refraction: boolean,
+   979→  dpr: number,
+   980→  _date: Date,
+   981→  latRad: number
+   982→) {
+   983→  for (const m of MESSIER) {
+   984→    const tr = transformStar(m.ra, m.dec, frame, latRad);
+   985→    let alt = tr.horizontal.alt;
+   986→    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+   987→    if (alt <= 0) continue; // below horizon
+   988→
+   989→    const proj = projectStereographic({
+   990→      cx,
+   991→      cy,
+   992→      radius,
+   993→      alt,
+   994→      az: tr.horizontal.az + rotation,
+   995→    });
+   996→
+   997→    // Scale the glyph by angular size, but clamp to a sensible range so
+   998→    // large angular extents (M31 ~3°) don't dominate the chart.
+   999→    const sizePx = Math.max(3 * dpr, Math.min(14 * dpr, (m.size / 30) * 6 * dpr));
+  1000→
+  1001→    drawMessierGlyph(ctx, m, proj.x, proj.y, sizePx, dpr);
+  1002→
+  1003→    // Label — color-coded by type
+  1004→    ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+  1005→    ctx.textAlign = "left";
+  1006→    ctx.textBaseline = "middle";
+  1007→    ctx.fillStyle = MESSIER_TYPE_COLORS[m.type];
+  1008→    ctx.fillText(`M${m.number}`, proj.x + sizePx + 3 * dpr, proj.y);
+  1009→  }
+  1010→}
+  1011→
+  1012→/** Draw the type-specific glyph for a Messier object at (x, y). */
+  1013→function drawMessierGlyph(
+  1014→  ctx: CanvasRenderingContext2D,
+  1015→  m: MessierObject,
+  1016→  x: number,
+  1017→  y: number,
+  1018→  size: number,
+  1019→  dpr: number
+  1020→) {
+  1021→  ctx.save();
+  1022→  switch (m.type) {
+  1023→    case "galaxy": {
+  1024→      // Faint amber tilted ellipse — disk orientation varies with number
+  1025→      const tilt = (m.number * 0.6) % Math.PI;
+  1026→      ctx.translate(x, y);
+  1027→      ctx.rotate(tilt);
+  1028→      ctx.strokeStyle = "rgba(252, 211, 77, 0.55)";
+  1029→      ctx.fillStyle = "rgba(252, 211, 77, 0.10)";
+  1030→      ctx.lineWidth = 0.9 * dpr;
+  1031→      ctx.beginPath();
+  1032→      ctx.ellipse(0, 0, size, size * 0.4, 0, 0, 2 * Math.PI);
+  1033→      ctx.fill();
+  1034→      ctx.stroke();
+  1035→      // Faint core glow
+  1036→      const core = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 0.5);
+  1037→      core.addColorStop(0, "rgba(252, 211, 77, 0.45)");
+  1038→      core.addColorStop(1, "rgba(252, 211, 77, 0)");
+  1039→      ctx.fillStyle = core;
+  1040→      ctx.beginPath();
+  1041→      ctx.arc(0, 0, size * 0.5, 0, 2 * Math.PI);
+  1042→      ctx.fill();
+  1043→      break;
+  1044→    }
+  1045→    case "nebula": {
+  1046→      // Dashed green circle
+  1047→      ctx.strokeStyle = "rgba(134, 239, 172, 0.75)";
+  1048→      ctx.fillStyle = "rgba(134, 239, 172, 0.08)";
+  1049→      ctx.lineWidth = 0.9 * dpr;
+  1050→      ctx.setLineDash([2 * dpr, 2 * dpr]);
+  1051→      ctx.beginPath();
+  1052→      ctx.arc(x, y, size, 0, 2 * Math.PI);
+  1053→      ctx.fill();
+  1054→      ctx.stroke();
+  1055→      ctx.setLineDash([]);
+  1056→      break;
+  1057→    }
+  1058→    case "planetary": {
+  1059→      // Cyan ring (annulus)
+  1060→      ctx.strokeStyle = "rgba(103, 232, 249, 0.85)";
+  1061→      ctx.fillStyle = "rgba(103, 232, 249, 0.10)";
+  1062→      ctx.lineWidth = 1.1 * dpr;
+  1063→      ctx.beginPath();
+  1064→      ctx.arc(x, y, size, 0, 2 * Math.PI);
+  1065→      ctx.fill();
+  1066→      ctx.stroke();
+  1067→      // Inner hole
+  1068→      ctx.fillStyle = "rgba(2, 6, 23, 0.85)";
+  1069→      ctx.beginPath();
+  1070→      ctx.arc(x, y, size * 0.45, 0, 2 * Math.PI);
+  1071→      ctx.fill();
+  1072→      break;
+  1073→    }
+  1074→    case "open": {
+  1075→      // Yellow cluster of dots in a ring pattern
+  1076→      const dots = 7;
+  1077→      ctx.fillStyle = "rgba(253, 224, 71, 0.85)";
+  1078→      for (let i = 0; i < dots; i++) {
+  1079→        const a = (i / dots) * 2 * Math.PI;
+  1080→        const dx = x + Math.cos(a) * size * 0.7;
+  1081→        const dy = y + Math.sin(a) * size * 0.7;
+  1082→        ctx.beginPath();
+  1083→        ctx.arc(dx, dy, 0.9 * dpr, 0, 2 * Math.PI);
+  1084→        ctx.fill();
+  1085→      }
+  1086→      // Center dot
+  1087→      ctx.fillStyle = "rgba(253, 224, 71, 0.95)";
+  1088→      ctx.beginPath();
+  1089→      ctx.arc(x, y, 1.0 * dpr, 0, 2 * Math.PI);
+  1090→      ctx.fill();
+  1091→      break;
+  1092→    }
+  1093→    case "globular": {
+  1094→      // Fuzzy orange circle with radial gradient
+  1095→      const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+  1096→      grad.addColorStop(0, "rgba(251, 146, 60, 0.95)");
+  1097→      grad.addColorStop(0.4, "rgba(251, 146, 60, 0.45)");
+  1098→      grad.addColorStop(1, "rgba(251, 146, 60, 0)");
+  1099→      ctx.fillStyle = grad;
+  1100→      ctx.beginPath();
+  1101→      ctx.arc(x, y, size, 0, 2 * Math.PI);
+  1102→      ctx.fill();
+  1103→      // Outer ring for definition
+  1104→      ctx.strokeStyle = "rgba(251, 146, 60, 0.55)";
+  1105→      ctx.lineWidth = 0.8 * dpr;
+  1106→      ctx.beginPath();
+  1107→      ctx.arc(x, y, size, 0, 2 * Math.PI);
+  1108→      ctx.stroke();
+  1109→      break;
+  1110→    }
+  1111→    case "supernova": {
+  1112→      // Red remnant dot with cross spikes
+  1113→      const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+  1114→      grad.addColorStop(0, "rgba(248, 113, 113, 0.9)");
+  1115→      grad.addColorStop(1, "rgba(248, 113, 113, 0)");
+  1116→      ctx.fillStyle = grad;
+  1117→      ctx.beginPath();
+  1118→      ctx.arc(x, y, size, 0, 2 * Math.PI);
+  1119→      ctx.fill();
+  1120→      ctx.strokeStyle = "rgba(248, 113, 113, 0.7)";
+  1121→      ctx.lineWidth = 0.7 * dpr;
+  1122→      const spike = size * 1.6;
+  1123→      ctx.beginPath();
+  1124→      ctx.moveTo(x - spike, y);
+  1125→      ctx.lineTo(x + spike, y);
+  1126→      ctx.moveTo(x, y - spike);
+  1127→      ctx.lineTo(x, y + spike);
+  1128→      ctx.stroke();
+  1129→      break;
+  1130→    }
+  1131→  }
+  1132→  ctx.restore();
+  1133→}
+  1134→

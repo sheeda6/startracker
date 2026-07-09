@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { NightModeClass } from "@/components/startracker/NightModeClass";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,9 +50,13 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        <NightModeClass />
         {children}
         <Toaster />
       </body>
     </html>
   );
 }
+
+/** Applies the .night-mode class to <html> based on the store state. */
+// NightModeClass is imported from @/components/startracker/NightModeClass

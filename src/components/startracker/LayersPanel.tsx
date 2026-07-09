@@ -29,6 +29,7 @@ import {
   Sun,
   Orbit,
   Telescope,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useStarTracker, type ViewLayers } from "@/lib/store";
@@ -54,6 +55,7 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "milkyWay", label: "Milky Way", icon: Cloud },
   { key: "solarSystem", label: "Sun · Moon · Planets", icon: Sun },
   { key: "messier", label: "Messier objects", icon: Telescope },
+  { key: "meteorShowers", label: "Meteor radiants", icon: Zap },
   { key: "cardinalDirections", label: "Cardinal directions", icon: Navigation },
   { key: "starLabels", label: "Star labels", icon: Star },
   { key: "refraction", label: "Atmospheric refraction", icon: Waves },

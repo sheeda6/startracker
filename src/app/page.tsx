@@ -31,6 +31,7 @@ import { LayersPanel } from "@/components/startracker/LayersPanel";
 import { SkySummaryPanel } from "@/components/startracker/SkySummaryPanel";
 import { ConstellationBrowser } from "@/components/startracker/ConstellationBrowser";
 import { MagnitudeFilter } from "@/components/startracker/MagnitudeFilter";
+import { SkyTour } from "@/components/startracker/SkyTour";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,7 @@ import {
   Satellite,
   Sparkles,
   Keyboard,
+  MoonStar,
 } from "lucide-react";
 
 export default function Home() {
@@ -73,6 +75,8 @@ export default function Home() {
   const setClockMode = useStarTracker((s) => s.setClockMode);
   const setCurrentTime = useStarTracker((s) => s.setCurrentTime);
   const resetToNow = useStarTracker((s) => s.resetToNow);
+  const nightMode = useStarTracker((s) => s.nightMode);
+  const setNightMode = useStarTracker((s) => s.setNightMode);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   // Keyboard shortcuts
@@ -110,11 +114,14 @@ export default function Home() {
         case "?":
           setShowShortcuts((v) => !v);
           break;
+        case "m": case "M":
+          setNightMode(!nightMode);
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clockMode, setClockMode, setCurrentTime, resetToNow, setSelectedHip]);
+  }, [clockMode, setClockMode, setCurrentTime, resetToNow, setSelectedHip, nightMode, setNightMode]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
@@ -261,6 +268,18 @@ export default function Home() {
           >
             <Keyboard className="h-4 w-4" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 hover:bg-white/10 ${
+              nightMode ? "bg-red-500/20 text-red-300 hover:text-red-200" : "text-slate-400 hover:text-slate-100"
+            }`}
+            onClick={() => setNightMode(!nightMode)}
+            aria-label="Toggle night mode"
+            title="Night mode (red theme for dark adaptation)"
+          >
+            <MoonStar className="h-4 w-4" />
+          </Button>
         </div>
 
         {/* Time controls strip */}
@@ -281,6 +300,8 @@ export default function Home() {
             <SkyMap />
             {/* Sky summary overlay (top-right) */}
             <SkySummaryPanel />
+            {/* Guided tour (top-center) */}
+            <SkyTour />
             {/* Observer badge overlay */}
             <div className="pointer-events-none absolute left-3 bottom-3 rounded-md border border-white/10 bg-slate-950/80 px-2.5 py-1.5 text-[10px] text-slate-300 backdrop-blur">
               <div className="flex items-center gap-1.5">
@@ -364,6 +385,7 @@ export default function Home() {
                 { keys: ["←", "→"], desc: "Step backward / forward 1 min" },
                 { keys: ["Shift+←", "Shift+→"], desc: "Step backward / forward 1 hour" },
                 { keys: ["Esc"], desc: "Deselect star" },
+                { keys: ["M"], desc: "Toggle night mode (red)" },
                 { keys: ["?"], desc: "Toggle this help" },
               ].map(({ keys, desc }) => (
                 <div key={desc} className="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
