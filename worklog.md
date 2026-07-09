@@ -713,3 +713,51 @@ Unresolved/Minor:
 - The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
 - Could add ISS/satellite tracking in future rounds.
 - VLM suggests simplifying table column headers — could abbreviate more.
+
+---
+Task ID: cron-review-9
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 9)
+Task: QA testing, proper motion time travel demo.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 8 — app had Tonight at a Glance, atmospheric haze, double-click zoom.
+- Tested with agent-browser: console clean, layout healthy (header 184px, sky map 260px).
+- VLM rated 8/10. Suggestion: "Streamline interface, enhance catalog navigation."
+- No critical bugs found.
+
+**New Features:**
+1. **Proper Motion Time Travel** (ProperMotionDemo.tsx + engine + store):
+   - New History "Time Travel" button in the toolbar opens a popover with a year slider (±100,000 years from J2000).
+   - Stars move according to their proper motion (pmRa, pmDec) from the Hipparcos catalog.
+   - `applyProperMotion()` function in engine.ts: converts mas/yr to radians, applies over the year offset, handles cos(δ) correction, clamps Dec, wraps RA.
+   - SkyMap applies proper motion to each star before transforming when `properMotionYear !== 0`.
+   - Preset buttons: Now, +1k yr, +10k yr, +50k yr, -50k yr.
+   - Animate button: auto-advances at 500 or 5000 yr/sec (toggle 1×/10× speed).
+   - Reset button restores J2000.
+   - Educational note about Barnard's Star (fastest naked-eye star at 10.3″/yr).
+   - Verified: setting +50,000 yr shows "EPOCH: +50,000 yr" and the sky map updates with shifted star positions.
+
+2. **Store updates**:
+   - Added `properMotionYear: number` and `setProperMotionYear` to the Zustand store.
+   - Default is 0 (J2000 epoch, no proper motion applied).
+
+**Bug Fixes:**
+- Fixed ProperMotionDemo animation: changed from `useState(() => {...})` (incorrect pattern) to proper `useEffect` with cleanup.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: Time Travel popover works, +50k yr preset changes the epoch and updates the sky map, reset restores J2000.
+- Console: clean.
+- VLM: 8/10, confirmed "intuitive time-travel controls for dynamic sky simulation."
+
+Stage Summary:
+- Added proper motion time travel: users can see how constellations distort over ±100,000 years.
+- App now has 4 time-related features: real-time clock, time jump (events), guided tour, and proper motion time travel.
+- All features integrate cleanly with the existing render pipeline.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- Proper motion is applied to stars only (not Messier/planets/Sun/Moon) — DSOs are fixed to J2000.
+- Could add ISS/satellite tracking in future rounds.

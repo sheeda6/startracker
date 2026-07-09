@@ -102,6 +102,10 @@ interface StarTrackerState {
   setMeasureEnd: (h: number | null) => void;
   clearMeasure: () => void;
 
+  // Proper motion demo (years offset from J2000)
+  properMotionYear: number;
+  setProperMotionYear: (y: number) => void;
+
   // UI
   rightPanelOpen: boolean;
   bottomPanelOpen: boolean;
@@ -209,6 +213,9 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
   setMeasureStart: (h) => set({ measureStart: h }),
   setMeasureEnd: (h) => set({ measureEnd: h }),
   clearMeasure: () => set({ measureStart: null, measureEnd: null }),
+
+  properMotionYear: 0,
+  setProperMotionYear: (y) => set({ properMotionYear: y }),
 
   rightPanelOpen: true,
   bottomPanelOpen: true,

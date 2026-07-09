@@ -101,6 +101,42 @@ export function buildFrame(observer: ObserverState): FrameContext {
 }
 
 /**
+ * Apply proper motion to a star's J2000 position over a given number of years.
+ *
+ * @param ra J2000 RA in radians
+ * @param dec J2000 Dec in radians
+ * @param pmRa proper motion in RA (mas/yr, includes cos(δ) factor)
+ * @param pmDec proper motion in Dec (mas/yr)
+ * @param years years from J2000 (can be negative for past)
+ * @returns adjusted { ra, dec } in radians
+ */
+export function applyProperMotion(
+  ra: number,
+  dec: number,
+  pmRa: number,
+  pmDec: number,
+  years: number,
+): { ra: number; dec: number } {
+  if (years === 0 || (pmRa === 0 && pmDec === 0)) {
+    return { ra, dec };
+  }
+  // Convert mas/yr to radians/yr
+  const MAS2RAD = Math.PI / (180 * 3600 * 1000);
+  const dra = pmRa * MAS2RAD * years;
+  const ddec = pmDec * MAS2RAD * years;
+  // pmRa already includes cos(δ), so divide to get true RA motion
+  const cosDec = Math.cos(dec);
+  let newRa = ra + (Math.abs(cosDec) > 1e-10 ? dra / cosDec : 0);
+  let newDec = dec + ddec;
+  // Clamp dec
+  if (newDec > Math.PI / 2) newDec = Math.PI / 2;
+  if (newDec < -Math.PI / 2) newDec = -Math.PI / 2;
+  // Wrap RA
+  newRa = ((newRa % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  return { ra: newRa, dec: newDec };
+}
+
+/**
  * Transform a single J2000 (RA, Dec) into horizontal coordinates using the
  * precomputed frame context. Precession + nutation are folded into a single
  * 3×3 matrix application.

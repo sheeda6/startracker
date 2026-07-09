@@ -30,6 +30,7 @@ import {
   buildFrame,
   transformStar,
   refract,
+  applyProperMotion,
   type FrameContext,
 } from "@/lib/astro/engine";
 import {
@@ -77,6 +78,7 @@ export function SkyMap() {
   const measureEnd = useStarTracker((s) => s.measureEnd);
   const setMeasureStart = useStarTracker((s) => s.setMeasureStart);
   const setMeasureEnd = useStarTracker((s) => s.setMeasureEnd);
+  const properMotionYear = useStarTracker((s) => s.properMotionYear);
 
   // Precomputed frame (memoized per time/observer)
   const frame: FrameContext = useMemo(
@@ -206,7 +208,11 @@ export function SkyMap() {
 
     for (const star of sortedStars) {
       if (star.mag > filters.maxMagnitude) continue;
-      const tr = transformStar(star.ra, star.dec, frame, latRad);
+      // Apply proper motion if the demo year is non-zero
+      const pos = properMotionYear !== 0
+        ? applyProperMotion(star.ra, star.dec, star.pmRa, star.pmDec, properMotionYear)
+        : { ra: star.ra, dec: star.dec };
+      const tr = transformStar(pos.ra, pos.dec, frame, latRad);
       let alt = tr.horizontal.alt;
       const az = tr.horizontal.az;
       if (layers.refraction && alt < Math.PI / 2) {
@@ -521,7 +527,7 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
-  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime, measureMode, measureStart, measureEnd]);
+  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime, measureMode, measureStart, measureEnd, properMotionYear]);
 
   // Sync the latest render closure into the ref (inside an effect, not during render).
   useEffect(() => {
