@@ -26,6 +26,8 @@ import {
   Waves,
   ZoomIn,
   RotateCcw,
+  Sun,
+  Orbit,
   type LucideIcon,
 } from "lucide-react";
 import { useStarTracker, type ViewLayers } from "@/lib/store";
@@ -49,6 +51,7 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "equator", label: "Celestial equator", icon: Circle },
   { key: "ecliptic", label: "Ecliptic", icon: Compass },
   { key: "milkyWay", label: "Milky Way", icon: Cloud },
+  { key: "solarSystem", label: "Sun · Moon · Planets", icon: Sun },
   { key: "cardinalDirections", label: "Cardinal directions", icon: Navigation },
   { key: "starLabels", label: "Star labels", icon: Star },
   { key: "refraction", label: "Atmospheric refraction", icon: Waves },

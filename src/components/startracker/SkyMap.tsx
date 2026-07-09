@@ -36,6 +36,7 @@ import {
 } from "@/lib/astro/projection";
 import { equatorialToHorizontal } from "@/lib/astro/coordinates";
 import { formatHMS, formatDMS, formatDeg } from "@/lib/astro/time";
+import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
 
 interface RenderedStar {
   star: Star;
@@ -51,7 +52,6 @@ export function SkyMap() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const renderedRef = useRef<RenderedStar[]>([]);
-  const rafRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const dprRef = useRef<number>(1);
 
@@ -109,18 +109,19 @@ export function SkyMap() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Main render loop — store the latest render fn in a ref so the rAF loop
-  // always invokes the most recent closure without re-subscribing.
+  // Main render loop — use a ref to hold the latest render fn and a single
+  // rAF loop that reads from it. This avoids re-subscribing on every prop change.
   const renderRef = useRef<() => void>(() => {});
-  const render = useCallback(() => {
+
+  // The render function reads current props/state at call time via closure,
+  // and is updated each render via the assignment below.
+  renderRef.current = () => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      rafRef.current = requestAnimationFrame(() => renderRef.current());
       return;
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) {
-      rafRef.current = requestAnimationFrame(() => renderRef.current());
       return;
     }
     const dpr = dprRef.current;
@@ -170,7 +171,7 @@ export function SkyMap() {
     // 7. Constellation lines
     const renderedStars: RenderedStar[] = [];
     if (layers.constellations) {
-      drawConstellationLines(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr);
+      drawConstellationLines(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, selectedHip);
     }
 
     // 8. Stars
@@ -252,25 +253,73 @@ export function SkyMap() {
       }
     }
 
-    // 9. Star labels
+    // 9. Star labels (with collision avoidance)
     if (layers.starLabels) {
       ctx.font = `${11 * dpr}px ui-monospace, monospace`;
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      for (const rs of renderedStars) {
-        // Label only bright stars, or the selected/hovered one
+      // Collect candidate labels sorted by magnitude (brightest first)
+      const candidates = renderedStars
+        .filter((rs) => {
+          const isSelected = rs.star.hip === selectedHip;
+          const isHovered = rs.star.hip === hoveredHip;
+          if (rs.star.mag > 2.5 && !isSelected && !isHovered) return false;
+          const label = rs.star.name || rs.star.bayer;
+          return !!label;
+        })
+        .sort((a, b) => a.star.mag - b.star.mag);
+
+      // Simple collision avoidance: track placed label rectangles
+      const placed: { x: number; y: number; w: number; h: number }[] = [];
+      const labelH = 12 * dpr;
+      const padX = 2 * dpr;
+      const padY = 3 * dpr;
+
+      for (const rs of candidates) {
         const isSelected = rs.star.hip === selectedHip;
         const isHovered = rs.star.hip === hoveredHip;
-        if (rs.star.mag > 2.5 && !isSelected && !isHovered) continue;
-        const label = rs.star.name || rs.star.bayer;
-        if (!label) continue;
+        const label = rs.star.name || rs.star.bayer || "";
+        const labelW = ctx.measureText(label).width + rs.r + 4 * dpr;
+        const lx = rs.x + rs.r + 3 * dpr;
+        const ly = rs.y;
+        const box = { x: lx - padX, y: ly - labelH / 2 - padY, w: labelW, h: labelH + padY * 2 };
+
+        // Check collision with already-placed labels
+        let collides = false;
+        if (!isSelected && !isHovered) {
+          for (const p of placed) {
+            if (
+              box.x < p.x + p.w &&
+              box.x + box.w > p.x &&
+              box.y < p.y + p.h &&
+              box.y + box.h > p.y
+            ) {
+              collides = true;
+              break;
+            }
+          }
+        }
+        if (collides) continue;
+        placed.push(box);
+
+        // Draw label background for selected/hovered
+        if (isSelected || isHovered) {
+          ctx.fillStyle = isSelected ? "rgba(251, 191, 36, 0.15)" : "rgba(186, 230, 253, 0.12)";
+          ctx.fillRect(box.x, box.y, box.w, box.h);
+        }
+
         ctx.fillStyle = isSelected
           ? "#fde68a"
           : isHovered
           ? "#e0e7ff"
-          : "rgba(220, 230, 255, 0.78)";
-        ctx.fillText(label, rs.x + rs.r + 3 * dpr, rs.y);
+          : "rgba(220, 230, 255, 0.82)";
+        ctx.fillText(label, lx, ly);
       }
+    }
+
+    // 9b. Solar system bodies (Sun, Moon, planets)
+    if (layers.solarSystem) {
+      drawSolarSystem(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
     }
 
     // 10. Hovered star ring
@@ -329,21 +378,18 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
+  };
 
-    rafRef.current = requestAnimationFrame(() => renderRef.current());
-  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg]);
-
-  // Keep renderRef in sync with the latest render closure
+  // Single rAF loop — reads the latest render fn from the ref each frame.
   useEffect(() => {
-    renderRef.current = render;
-  }, [render]);
-
-  useEffect(() => {
-    rafRef.current = requestAnimationFrame(() => renderRef.current());
-    return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    let raf = 0;
+    const tick = () => {
+      renderRef.current();
+      raf = requestAnimationFrame(tick);
     };
-  }, [render]);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // Mouse interaction
   const handleMouseMove = useCallback(
@@ -568,13 +614,31 @@ function drawConstellationLines(
   frame: FrameContext,
   rotation: number,
   refraction: boolean,
-  dpr: number
+  dpr: number,
+  selectedHip: number | null
 ) {
-  ctx.strokeStyle = "rgba(96, 165, 250, 0.35)";
-  ctx.lineWidth = 0.7 * dpr;
+  // Determine the constellation of the selected star (for highlighting)
+  let highlightAbbr: string | null = null;
+  if (selectedHip != null) {
+    const sel = STARS_BY_HIP.get(selectedHip);
+    if (sel) highlightAbbr = sel.constellation;
+  }
+
   const latRad = Math.asin(frame.sinLat);
 
   for (const [abbr, lines] of Object.entries(CONSTELLATION_LINES)) {
+    const isHighlighted = abbr === highlightAbbr;
+    ctx.strokeStyle = isHighlighted
+      ? "rgba(251, 191, 36, 0.9)"
+      : "rgba(125, 211, 252, 0.45)";
+    ctx.lineWidth = (isHighlighted ? 1.8 : 1.0) * dpr;
+    ctx.lineCap = "round";
+    if (isHighlighted) {
+      ctx.shadowColor = "rgba(251, 191, 36, 0.4)";
+      ctx.shadowBlur = 6 * dpr;
+    } else {
+      ctx.shadowBlur = 0;
+    }
     for (const [hipA, hipB] of lines) {
       const sA = STARS_BY_HIP.get(hipA);
       const sB = STARS_BY_HIP.get(hipB);
@@ -599,6 +663,7 @@ function drawConstellationLines(
       ctx.lineTo(pB.x, pB.y);
       ctx.stroke();
     }
+    ctx.shadowBlur = 0;
     // Constellation name label at the centroid of its first line
     if (lines.length > 0) {
       const [h0, h1] = lines[0];
@@ -614,8 +679,8 @@ function drawConstellationLines(
           });
           const info = CONSTELLATION_MAP[abbr];
           if (info) {
-            ctx.font = `${10 * dpr}px ui-sans-serif, system-ui`;
-            ctx.fillStyle = "rgba(147, 197, 253, 0.5)";
+            ctx.font = `${isHighlighted ? "bold " : ""}${10 * dpr}px ui-sans-serif, system-ui`;
+            ctx.fillStyle = isHighlighted ? "rgba(251, 191, 36, 0.95)" : "rgba(147, 197, 253, 0.55)";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(info.abbr, p.x, p.y - 14 * dpr);
@@ -693,4 +758,147 @@ function drawMilkyWay(
     }
   }
   ctx.restore();
+}
+
+/**
+ * Draw the Sun, Moon, and naked-eye planets on the sky map.
+ * The Sun is a golden disc with rays; the Moon shows its current phase
+ * (shaded dark side); planets use their traditional color + symbol.
+ */
+function drawSolarSystem(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  frame: FrameContext,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latRad: number
+) {
+  // Planets
+  const planets = planetPositions(date);
+  for (const p of planets) {
+    const tr = transformStar(p.ra, p.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt < -0.02) continue;
+    const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+    const r = 4 * dpr;
+    // Glow
+    const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 4);
+    glow.addColorStop(0, p.color + "aa");
+    glow.addColorStop(1, p.color + "00");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, r * 4, 0, 2 * Math.PI);
+    ctx.fill();
+    // Body
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+    // Symbol + name
+    ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = p.color;
+    ctx.fillText(`${p.symbol} ${p.name}`, proj.x + r + 4 * dpr, proj.y);
+  }
+
+  // Sun
+  const sun = sunPosition(date);
+  {
+    const tr = transformStar(sun.ra, sun.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt > -0.02) {
+      const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+      const r = 8 * dpr;
+      // Outer corona glow
+      const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 5);
+      glow.addColorStop(0, "rgba(253, 224, 71, 0.6)");
+      glow.addColorStop(0.4, "rgba(251, 146, 60, 0.25)");
+      glow.addColorStop(1, "rgba(251, 146, 60, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r * 5, 0, 2 * Math.PI);
+      ctx.fill();
+      // Rays
+      ctx.strokeStyle = "rgba(253, 224, 71, 0.7)";
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.lineCap = "round";
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * 2 * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(proj.x + Math.cos(a) * r * 1.3, proj.y + Math.sin(a) * r * 1.3);
+        ctx.lineTo(proj.x + Math.cos(a) * r * 2.4, proj.y + Math.sin(a) * r * 2.4);
+        ctx.stroke();
+      }
+      // Disc
+      const disc = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r);
+      disc.addColorStop(0, "#fffbeb");
+      disc.addColorStop(0.6, "#fcd34d");
+      disc.addColorStop(1, "#f59e0b");
+      ctx.fillStyle = disc;
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+      ctx.fill();
+      // Label
+      ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fde68a";
+      ctx.fillText("☉ Sun", proj.x + r + 6 * dpr, proj.y);
+    }
+  }
+
+  // Moon
+  const moon = moonPosition(date);
+  {
+    const tr = transformStar(moon.ra, moon.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt > -0.02) {
+      const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+      const r = 7 * dpr;
+      const phase = moonPhase(date);
+      // Soft glow
+      const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 3);
+      glow.addColorStop(0, "rgba(226, 232, 240, 0.3)");
+      glow.addColorStop(1, "rgba(226, 232, 240, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r * 3, 0, 2 * Math.PI);
+      ctx.fill();
+      // Lit disc
+      ctx.fillStyle = "#e2e8f0";
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+      ctx.fill();
+      // Dark side (shadow) — drawn as an offset circle
+      const illum = phase.illumination;
+      const offset = (1 - 2 * illum) * r;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+      ctx.clip();
+      ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+      ctx.beginPath();
+      if (phase.waxing) {
+        ctx.arc(proj.x - r + offset * 2, proj.y, r, 0, 2 * Math.PI);
+      } else {
+        ctx.arc(proj.x + r - offset * 2, proj.y, r, 0, 2 * Math.PI);
+      }
+      ctx.fill();
+      ctx.restore();
+      // Label
+      ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#e2e8f0";
+      ctx.fillText(`☽ Moon ${(illum * 100).toFixed(0)}%`, proj.x + r + 6 * dpr, proj.y);
+    }
+  }
 }

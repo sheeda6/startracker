@@ -144,3 +144,72 @@ Unresolved/Minor:
 - The "1 Issue" Next.js dev badge is a cross-origin dev-origins suggestion (not a real bug).
 - Star catalog has ~270 stars (curated bright stars); could be expanded with full Hipparcos/Gaia data in future.
 - Some constellation stick-figure lines could be refined for accuracy.
+
+---
+Task ID: cron-review-1
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger
+Task: QA testing, bug fixes, styling improvements, and new feature additions.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed existing worklog (Tasks 1-13) — app was feature-complete with 8 UI components.
+- Tested with agent-browser: page renders, all interactions work, no runtime errors.
+- VLM screenshot analysis rated initial quality 8/10 with feedback: faint constellation lines, label overlap, typography inconsistencies.
+- **Found performance bug**: At ×3600 fast-forward, the StarTable recomputed rise/set times for all 270 stars at 10Hz (2700 calculations/sec), freezing the browser (agent-browser CDP timeout).
+
+**Bug Fixes:**
+1. **StarTable performance (critical)**: Split the `rows` useMemo into two:
+   - `riseSetCache` — recomputes rise/transit/set ONLY when the calendar DATE changes (via `dateKey`), not every 100ms tick. This reduces 270 × 10Hz calculations to 270 × 1/day.
+   - `rows` (alt/az) — still updates every tick (lightweight O(1) per star).
+   - Verified: ×3600 fast-forward no longer freezes the page.
+2. **SkyMap rAF loop**: Refactored from `useCallback` + `renderRef` self-reference pattern (which triggered React Compiler `preserve-manual-memoization` error) to a clean `renderRef.current` assignment-during-render + single `useEffect` rAF loop with a `tick` function. Lint-clean, no manual memoization warnings.
+3. **engine.ts import** (from previous round): confirmed fix holds — refraction functions imported from `./refraction` not `./coordinates`.
+
+**New Features:**
+1. **Solar System module** (`src/lib/astro/solarSystem.ts`):
+   - `sunPosition()` — Sun's apparent geocentric RA/Dec via truncated VSOP87 (dominant terms). Includes aberration correction.
+   - `moonPosition()` — Moon's apparent geocentric RA/Dec via truncated Brown's theory (15 dominant periodic terms). Includes distance calculation.
+   - `moonPhase()` — Phase angle, illumination fraction, waxing/waning, and phase name (New/Waxing Crescent/First Quarter/etc.).
+   - `planetPositions()` — Mercury, Venus, Mars, Jupiter, Saturn positions via truncated Keplerian elements with secular variations. Solves Kepler's equation (5 iterations). Includes planet magnitude, color, and astronomical symbol.
+2. **Sun/Moon/planets rendering on SkyMap**: 
+   - Sun: golden disc with 8-ray corona and radial gradient glow.
+   - Moon: lit disc with clipped shadow circle showing the current phase (waxing/waning correctly rendered).
+   - Planets: colored discs with glow + symbol + name label.
+   - All rendered with the same stereographic projection as stars, respecting refraction toggle.
+3. **"Tonight's Sky" summary panel** (`SkySummaryPanel.tsx`):
+   - Overlay card in the top-right of the sky map (glass-morphism, `pointer-events-auto`).
+   - Sun status: Daytime / Civil twilight / Nautical twilight / Astronomical twilight / Night (color-coded) + altitude.
+   - Moon: SVG-rendered phase icon + illumination % + phase name + altitude.
+   - Planets up: colored badges with symbols + altitude for each visible planet.
+   - Brightest visible star: clickable to select, shows name + magnitude.
+   - Visible stars count: total stars above horizon within magnitude limit.
+4. **Constellation highlight**: When a star is selected, its constellation lines and name are highlighted in amber/gold with a glow shadow, while other constellations dim to 45% opacity. Verified visually via VLM.
+5. **Keyboard shortcuts**: Space (pause/resume), F (fast-forward), R (reverse), N (now), ←/→ (step 1 min), Shift+←/→ (step 1 hour), Esc (deselect), ? (toggle shortcuts help). Includes a keyboard icon button in the toolbar and a shortcuts overlay dialog.
+6. **Label collision avoidance**: Star labels on the sky map now use a rectangle-collision algorithm — labels are sorted by brightness (brightest first) and overlapping labels are skipped (except for selected/hovered stars, which always show with a background highlight).
+7. **New layers**: Added `solarSystem` and `constellationBoundaries` to the ViewLayers store. The LayersPanel now includes a "Sun · Moon · Planets" toggle.
+
+**Styling Improvements:**
+- Constellation lines brightened from `rgba(96,165,250,0.35)` 0.7px to `rgba(125,211,252,0.45)` 1.0px with `lineCap: round`.
+- Star labels use collision avoidance with background highlights for selected/hovered.
+- Star label opacity increased from 0.78 to 0.82 for readability.
+- Footer updated with keyboard shortcuts link and "Sun/Moon/planets" catalog note.
+- SkySummaryPanel uses consistent dark glass-morphism design (bg-slate-950/85, backdrop-blur, border-white/10).
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning (TanStack Table incompatible-library).
+- agent-browser: page loads, all features work (selection, search, filters, time controls, keyboard shortcuts, constellation highlight, performance at ×3600).
+- Console: clean (no errors after fresh browser session).
+- VLM final rating: 9/10 (up from 8/10).
+
+Stage Summary:
+- Performance bug fixed (StarTable no longer freezes at ×3600).
+- 5 major new features added: Solar System (Sun/Moon/planets), Tonight's Sky panel, constellation highlight, keyboard shortcuts, label collision avoidance.
+- Visual quality improved from 8/10 to 9/10 per VLM.
+- App is production-ready with comprehensive astronomy features.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug; only appears in dev mode).
+- Planet positions are approximate (~1° for outer planets) — sufficient for visual use but not for telescope pointing.
+- Moon phase icon is a simplified 2-circle model; a proper terminator would need a more complex SVG path.
+- Could add more constellation stick-figure definitions for completeness.

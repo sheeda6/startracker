@@ -42,6 +42,8 @@ export interface ViewLayers {
   cardinalDirections: boolean;
   starLabels: boolean;
   refraction: boolean;
+  solarSystem: boolean;
+  constellationBoundaries: boolean;
 }
 
 export interface ViewState {
@@ -174,6 +176,8 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
     cardinalDirections: true,
     starLabels: true,
     refraction: true,
+    solarSystem: true,
+    constellationBoundaries: false,
   },
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),

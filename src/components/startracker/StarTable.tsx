@@ -72,18 +72,20 @@ export function StarTable() {
   const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
   const [sorting, setSorting] = useState<SortingState>([{ id: "mag", desc: false }]);
 
-  // Build the frame and enrich stars with computed columns
-  const rows: StarRow[] = useMemo(() => {
-    const frame = buildFrame({
-      date: currentTime,
-      lat: (observer.latDeg * Math.PI) / 180,
-      lon: (observer.lonDeg * Math.PI) / 180,
-      elevationM: observer.elevationM,
-    });
+  // Throttle: rise/set times only need to recompute when the calendar DATE
+  // changes (not every 100ms tick). At ×3600 fast-forward this prevents
+  // 270 × 10Hz rise/set calculations from freezing the page.
+  const dateKey = useMemo(() => {
+    const d = currentTime;
+    return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+  }, [currentTime]);
+
+  const tz = observer.timezone || "UTC";
+
+  // Rise/transit/set — recomputed only when the date or observer changes.
+  const riseSetCache = useMemo(() => {
     const latRad = (observer.latDeg * Math.PI) / 180;
     const lonRad = (observer.lonDeg * Math.PI) / 180;
-    const tz = observer.timezone || "UTC";
-
     const fmtTime = (d: Date | null) => {
       if (!d) return "—";
       try {
@@ -97,11 +99,8 @@ export function StarTable() {
         return d.toISOString().slice(11, 16);
       }
     };
-
-    return STARS.map((s) => {
-      const tr = transformStar(s.ra, s.dec, frame, latRad);
-      let alt = tr.horizontal.alt;
-      if (layers.refraction && alt < Math.PI / 2) alt = refract(alt);
+    const cache = new Map<number, { rise: string; transit: string; set: string }>();
+    for (const s of STARS) {
       const rs = computeRiseTransitSet({
         ra: s.ra,
         dec: s.dec,
@@ -109,17 +108,41 @@ export function StarTable() {
         lon: lonRad,
         date: currentTime,
       });
+      cache.set(s.hip, {
+        rise: fmtTime(rs.rise),
+        transit: fmtTime(rs.transit),
+        set: fmtTime(rs.set),
+      });
+    }
+    return cache;
+  }, [dateKey, observer.latDeg, observer.lonDeg, observer.elevationM, tz]);
+
+  // Alt/Az — recomputed on every tick (lightweight, O(1) per star).
+  const rows: StarRow[] = useMemo(() => {
+    const frame = buildFrame({
+      date: currentTime,
+      lat: (observer.latDeg * Math.PI) / 180,
+      lon: (observer.lonDeg * Math.PI) / 180,
+      elevationM: observer.elevationM,
+    });
+    const latRad = (observer.latDeg * Math.PI) / 180;
+
+    return STARS.map((s) => {
+      const tr = transformStar(s.ra, s.dec, frame, latRad);
+      let alt = tr.horizontal.alt;
+      if (layers.refraction && alt < Math.PI / 2) alt = refract(alt);
+      const rs = riseSetCache.get(s.hip)!;
       return {
         ...s,
         altDeg: (alt * 180) / Math.PI,
         azDeg: (tr.horizontal.az * 180) / Math.PI,
-        riseTime: fmtTime(rs.rise),
-        transitTime: fmtTime(rs.transit),
-        setTime: fmtTime(rs.set),
+        riseTime: rs.rise,
+        transitTime: rs.transit,
+        setTime: rs.set,
         visible: alt > 0,
       } as StarRow;
     });
-  }, [observer, currentTime, layers.refraction]);
+  }, [currentTime, observer, layers.refraction, riseSetCache]);
 
   // Apply filters
   const filteredRows = useMemo(() => {

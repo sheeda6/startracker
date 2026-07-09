@@ -19,7 +19,7 @@
  *  └─────────────────────────────────────────────────────────┘
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SkyMap } from "@/components/startracker/SkyMap";
 import { StarDetails } from "@/components/startracker/StarDetails";
 import { StarTable } from "@/components/startracker/StarTable";
@@ -28,6 +28,7 @@ import { ObserverPanel } from "@/components/startracker/ObserverPanel";
 import { SearchBar } from "@/components/startracker/SearchBar";
 import { FilterPanel } from "@/components/startracker/FilterPanel";
 import { LayersPanel } from "@/components/startracker/LayersPanel";
+import { SkySummaryPanel } from "@/components/startracker/SkySummaryPanel";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +56,7 @@ import {
   Github,
   Satellite,
   Sparkles,
+  Keyboard,
 } from "lucide-react";
 
 export default function Home() {
@@ -63,7 +65,54 @@ export default function Home() {
   const bottomPanelOpen = useStarTracker((s) => s.bottomPanelOpen);
   const setBottomPanelOpen = useStarTracker((s) => s.setBottomPanelOpen);
   const selectedHip = useStarTracker((s) => s.selectedHip);
+  const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
   const observer = useStarTracker((s) => s.observer);
+  const clockMode = useStarTracker((s) => s.clockMode);
+  const setClockMode = useStarTracker((s) => s.setClockMode);
+  const setCurrentTime = useStarTracker((s) => s.setCurrentTime);
+  const resetToNow = useStarTracker((s) => s.resetToNow);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Ignore when typing in inputs
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          setClockMode(clockMode === "paused" ? "realtime" : "paused");
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          setCurrentTime(new Date(useStarTracker.getState().currentTime.getTime() + (e.shiftKey ? 3600000 : 60000)));
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          setCurrentTime(new Date(useStarTracker.getState().currentTime.getTime() - (e.shiftKey ? 3600000 : 60000)));
+          break;
+        case "n": case "N":
+          resetToNow();
+          break;
+        case "f": case "F":
+          setClockMode("fast");
+          break;
+        case "r": case "R":
+          setClockMode("reverse");
+          break;
+        case "Escape":
+          setSelectedHip(null);
+          break;
+        case "?":
+          setShowShortcuts((v) => !v);
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [clockMode, setClockMode, setCurrentTime, resetToNow, setSelectedHip]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
@@ -176,6 +225,16 @@ export default function Home() {
           >
             {bottomPanelOpen ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-slate-400 hover:bg-white/10 hover:text-slate-100"
+            onClick={() => setShowShortcuts(true)}
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="h-4 w-4" />
+          </Button>
         </div>
 
         {/* Time controls strip */}
@@ -194,6 +253,8 @@ export default function Home() {
             aria-label="Sky map"
           >
             <SkyMap />
+            {/* Sky summary overlay (top-right) */}
+            <SkySummaryPanel />
             {/* Observer badge overlay */}
             <div className="pointer-events-none absolute left-3 bottom-3 rounded-md border border-white/10 bg-slate-950/80 px-2.5 py-1.5 text-[10px] text-slate-300 backdrop-blur">
               <div className="flex items-center gap-1.5">
@@ -244,6 +305,57 @@ export default function Home() {
         )}
       </main>
 
+      {/* Keyboard shortcuts overlay */}
+      {showShortcuts && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-white/10 bg-slate-950 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-100">
+                <Keyboard className="h-4 w-4 text-amber-300" />
+                Keyboard Shortcuts
+              </h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-slate-400 hover:text-slate-100"
+                onClick={() => setShowShortcuts(false)}
+              >
+                Close
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 gap-2 text-sm">
+              {[
+                { keys: ["Space"], desc: "Pause / resume time" },
+                { keys: ["F"], desc: "Fast-forward" },
+                { keys: ["R"], desc: "Reverse time" },
+                { keys: ["N"], desc: "Reset to now" },
+                { keys: ["←", "→"], desc: "Step backward / forward 1 min" },
+                { keys: ["Shift+←", "Shift+→"], desc: "Step backward / forward 1 hour" },
+                { keys: ["Esc"], desc: "Deselect star" },
+                { keys: ["?"], desc: "Toggle this help" },
+              ].map(({ keys, desc }) => (
+                <div key={desc} className="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
+                  <span className="text-slate-300">{desc}</span>
+                  <div className="flex gap-1">
+                    {keys.map((k) => (
+                      <kbd key={k} className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-amber-300">
+                        {k}
+                      </kbd>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile details drawer */}
       {!rightPanelOpen && selectedHip && (
         <Sheet open={true} onOpenChange={() => setRightPanelOpen(true)}>
@@ -284,8 +396,17 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowShortcuts(true)}
+              className="hidden items-center gap-1 text-slate-500 transition-colors hover:text-slate-300 md:flex"
+            >
+              <Keyboard className="h-3 w-3" />
+              <kbd className="rounded border border-white/15 bg-white/5 px-1 py-0.5 font-mono text-[9px]">?</kbd>
+              <span className="text-[10px]">Shortcuts</span>
+            </button>
+            <span className="hidden text-slate-600 md:inline">·</span>
             <span className="hidden md:inline">
-              Hipparcos catalog · ~270 bright stars
+              Hipparcos catalog · ~270 bright stars · Sun/Moon/planets
             </span>
             <span className="text-slate-600">·</span>
             <a
