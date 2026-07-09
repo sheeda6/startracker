@@ -663,3 +663,53 @@ Unresolved/Minor:
 - The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
 - Time Jump sampling uses 2-min resolution (1440 steps over 48h) which is approximate but fast.
 - Could add ISS/satellite tracking in future rounds.
+
+---
+Task ID: cron-review-8
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 8)
+Task: QA testing, Tonight at a Glance panel, atmospheric haze, double-click zoom.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 7 — app had interactive hover tooltips, Time Jump panel.
+- Tested with agent-browser: console clean, layout healthy (header 183px, sky map 260px).
+- VLM rated 8/10. Suggestion: "Enhance star catalog table usability."
+- No critical bugs found.
+
+**New Features:**
+1. **Tonight at a Glance panel** (TonightAtAGlance.tsx):
+   - New TrendingUp "Top Targets" button in the toolbar.
+   - Ranks observing targets by a composite score: altitude (×0.5) + brightness (×15 for mag<3) + moon separation (×10 if >30°).
+   - Shows top 8 targets across all object types: stars (mag<2.5), planets, Moon (when sun is down), Messier objects (mag<6).
+   - Each target shows: rank badge (#1 highlighted in amber), type icon (star/planet/moon/messier), name, magnitude, altitude, constellation, and a reason string ("High overhead · moon-free").
+   - Clicking a star target selects it in the details panel.
+   - Footer explains the scoring formula.
+   - Verified: shows Sirius (#1, 33°), Capella (#2, 75°), Jupiter (#3, 53°), Betelgeuse (#4, 56°), Procyon, Pollux, Rigel, Castor.
+
+2. **Atmospheric haze rendering** (SkyMap):
+   - Added a subtle blue radial gradient haze near the horizon (radius 0.7→1.0 of sky radius).
+   - Creates a more realistic atmospheric perspective effect.
+   - VLM confirmed: "sky map is more atmospheric/realistic with the added atmospheric haze near the horizon."
+
+3. **Double-click to zoom** (SkyMap):
+   - Double-clicking a star selects it AND zooms in by 0.8× (up to 4× max).
+   - Uses a slightly larger hit radius (20px vs 16px for single click) for easier targeting.
+   - Disabled in measure mode to avoid conflicts.
+   - Added `onDoubleClick` handler to the canvas.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: Top Targets popover shows ranked list, all interactions work.
+- Console: clean.
+- VLM: 8/10, confirmed atmospheric haze improvement.
+
+Stage Summary:
+- Added 3 new features: Tonight at a Glance ranked targets panel, atmospheric haze, double-click zoom.
+- App now has comprehensive observing guidance (top targets, observing conditions, time jump, guided tour).
+- Sky map is more atmospheric and realistic.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- Could add ISS/satellite tracking in future rounds.
+- VLM suggests simplifying table column headers — could abbreviate more.

@@ -152,6 +152,16 @@ export function SkyMap() {
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, W, H);
 
+    // 1b. Atmospheric haze near horizon (subtle blue glow)
+    const hazeGrad = ctx.createRadialGradient(cx, cy, radius * 0.7, cx, cy, radius);
+    hazeGrad.addColorStop(0, "rgba(30, 60, 120, 0)");
+    hazeGrad.addColorStop(0.7, "rgba(30, 60, 120, 0.03)");
+    hazeGrad.addColorStop(1, "rgba(60, 100, 180, 0.08)");
+    ctx.fillStyle = hazeGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.fill();
+
     // 2. Outside-horizon mask (ground)
     ctx.save();
     ctx.beginPath();
@@ -637,6 +647,33 @@ export function SkyMap() {
     [setSelectedHip, measureMode, measureStart, setMeasureStart, setMeasureEnd]
   );
 
+  // Double-click: zoom in on the clicked star
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (measureMode) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = dprRef.current;
+      const x = (e.clientX - rect.left) * dpr;
+      const y = (e.clientY - rect.top) * dpr;
+      let best: RenderedStar | null = null;
+      let bestDist = 20 * dpr;
+      for (const rs of renderedRef.current) {
+        const d = Math.hypot(rs.x - x, rs.y - y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = rs;
+        }
+      }
+      if (best) {
+        setSelectedHip(best.star.hip);
+        setView({ zoom: Math.min(4, useStarTracker.getState().view.zoom + 0.8) });
+      }
+    },
+    [setSelectedHip, setView, measureMode]
+  );
+
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLCanvasElement>) => {
       // Zoom in/out
@@ -705,6 +742,7 @@ export function SkyMap() {
         onMouseMove={handleMouseMove}
         onMouseLeave={() => { setHoveredHip(null); dragRef.current.active = false; }}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}

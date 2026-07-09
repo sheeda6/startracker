@@ -36,6 +36,7 @@ import { MeasureOverlay } from "@/components/startracker/MeasureOverlay";
 import { ObservingConditions } from "@/components/startracker/ObservingConditions";
 import { CompassControl } from "@/components/startracker/CompassControl";
 import { TimeJump } from "@/components/startracker/TimeJump";
+import { TonightAtAGlance } from "@/components/startracker/TonightAtAGlance";
 import { useStarTracker } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,7 @@ import {
   MoonStar,
   Ruler,
   Calendar,
+  TrendingUp,
 } from "lucide-react";
 
 export default function Home() {
@@ -161,6 +163,28 @@ export default function Home() {
           <MagnitudeFilter />
 
           <div className="flex-1" />
+
+          {/* Tonight at a Glance */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white"
+              >
+                <TrendingUp className="mr-1.5 h-3.5 w-3.5" />
+                <span className="hidden lg:inline">Top Targets</span>
+                <span className="lg:hidden">Top</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-80 border-white/10 bg-slate-950/95 p-0 text-slate-200 backdrop-blur-md"
+              align="end"
+              sideOffset={6}
+            >
+              <TonightAtAGlance />
+            </PopoverContent>
+          </Popover>
 
           {/* Time jump */}
           <Popover>
