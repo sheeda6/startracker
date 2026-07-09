@@ -18,10 +18,11 @@
  * (~10 Hz actual physics update; animation frame interpolates).
  */
 
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { useStarTracker } from "@/lib/store";
 import { STARS, STARS_BY_HIP, spectralColor, type Star } from "@/data/stars";
+import { getStarProperties } from "@/data/starProperties";
 import { CONSTELLATION_LINES, CONSTELLATION_MAP } from "@/data/constellations";
 import { MESSIER, MESSIER_TYPE_COLORS, type MessierObject } from "@/data/messier";
 import { getActiveShowers, daysToPeak } from "@/data/meteorShowers";
@@ -548,12 +549,18 @@ export function SkyMap() {
     []
   );
 
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const dpr = dprRef.current;
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      mousePosRef.current = { x: px, y: py };
 
       // Handle drag-to-rotate
       if (dragRef.current.active) {
@@ -580,9 +587,13 @@ export function SkyMap() {
         }
       }
       setHoveredHip(best ? best.star.hip : null);
+      // Throttle mouse position state updates — only when hovering a star
+      if (best) {
+        setMousePos({ x: px, y: py });
+      }
       canvas.style.cursor = best ? "pointer" : "grab";
     },
-    [setHoveredHip, setView]
+    [setHoveredHip, setView, setMousePos]
   );
 
   const handleClick = useCallback(
@@ -709,17 +720,83 @@ export function SkyMap() {
       >
         <Download className="h-3.5 w-3.5" />
       </button>
-      {/* Hover tooltip */}
-      {hoveredHip != null && STARS_BY_HIP.has(hoveredHip) && (
-        <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-white/15 bg-slate-950/85 px-3 py-2 text-xs text-slate-100 shadow-xl backdrop-blur">
-          <div className="font-semibold text-amber-300">
-            {STARS_BY_HIP.get(hoveredHip)?.name || STARS_BY_HIP.get(hoveredHip)?.bayer || `HIP ${hoveredHip}`}
+      {/* Hover tooltip — follows the cursor, shows detailed star info */}
+      {hoveredHip != null && STARS_BY_HIP.has(hoveredHip) && (() => {
+        const star = STARS_BY_HIP.get(hoveredHip)!;
+        const props = getStarProperties(star.hip);
+        const [cr, cg, cb] = spectralColor(star.spectral);
+        const mp = mousePos;
+        // Position tooltip near cursor but keep within bounds
+        const tipW = 220;
+        const containerW = 800;
+        const tipLeft = mp.x + 16 + tipW > containerW ? mp.x - tipW - 16 : mp.x + 16;
+        return (
+          <div
+            className="pointer-events-none absolute z-30 w-[220px] rounded-lg border border-white/15 bg-slate-950/95 p-3 text-xs shadow-2xl backdrop-blur-md"
+            style={{ left: tipLeft, top: mp.y + 16 }}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block h-3 w-3 shrink-0 rounded-full"
+                style={{ background: `rgb(${cr},${cg},${cb})`, boxShadow: `0 0 6px rgb(${cr},${cg},${cb})` }}
+              />
+              <span className="flex-1 truncate font-semibold text-amber-300">
+                {star.name || star.bayer || `HIP ${star.hip}`}
+              </span>
+              <span className="font-mono text-[10px] text-slate-500">{star.constellation}</span>
+            </div>
+            {/* Quick stats */}
+            <div className="mt-1.5 grid grid-cols-3 gap-1 border-t border-white/5 pt-1.5">
+              <div>
+                <div className="text-[8px] uppercase text-slate-600">Mag</div>
+                <div className="font-mono text-[11px] text-slate-200">{star.mag.toFixed(2)}</div>
+              </div>
+              <div>
+                <div className="text-[8px] uppercase text-slate-600">Spec</div>
+                <div className="font-mono text-[11px] text-slate-200">{star.spectral}</div>
+              </div>
+              <div>
+                <div className="text-[8px] uppercase text-slate-600">Dist</div>
+                <div className="font-mono text-[11px] text-slate-200">{star.distanceLy > 0 ? `${star.distanceLy < 1000 ? star.distanceLy : (star.distanceLy/1000).toFixed(1)+'k'}` : '—'}</div>
+              </div>
+            </div>
+            {/* Physical properties preview */}
+            {props && (
+              <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 border-t border-white/5 pt-1.5 text-[10px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Temp</span>
+                  <span className="font-mono text-slate-300">{props.temperatureK.toLocaleString()}K</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Mass</span>
+                  <span className="font-mono text-slate-300">{props.massSolar}M☉</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Radius</span>
+                  <span className="font-mono text-slate-300">{props.radiusSolar.toLocaleString()}R☉</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Lum</span>
+                  <span className="font-mono text-slate-300">{props.luminositySolar.toLocaleString()}L☉</span>
+                </div>
+              </div>
+            )}
+            {/* Bayer/Flamsteed */}
+            {(star.bayer || star.flamsteed > 0) && (
+              <div className="mt-1.5 border-t border-white/5 pt-1.5 text-[10px] text-slate-400">
+                {star.bayer && <span className="mr-2">{star.bayer}</span>}
+                {star.flamsteed > 0 && <span>{star.flamsteed} {star.constellation}</span>}
+                <span className="ml-2 text-slate-600">· HIP {star.hip}</span>
+              </div>
+            )}
+            {/* Hint */}
+            <div className="mt-1.5 text-center text-[9px] text-slate-600">
+              Click to inspect · Press Esc to deselect
+            </div>
           </div>
-          <div className="mt-0.5 text-[10px] text-slate-300">
-            {STARS_BY_HIP.get(hoveredHip)?.spectral} · mag {STARS_BY_HIP.get(hoveredHip)?.mag.toFixed(2)}
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

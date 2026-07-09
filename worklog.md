@@ -606,3 +606,60 @@ Unresolved/Minor:
 - Constellation mythology only available for 20 major constellations; could be expanded.
 - VLM couldn't see the mythology section in screenshots because it requires scrolling down in the details panel — the content IS present (verified via DOM).
 - Could add ISS/satellite tracking in future rounds.
+
+---
+Task ID: cron-review-7
+Agent: main (Z.ai Code) — 15-min webDevReview cron trigger (round 7)
+Task: QA testing, interactive hover tooltips, Time Jump panel.
+
+Work Log:
+
+**QA Assessment:**
+- Reviewed worklog from round 6 — app had mobile touch, welcome overlay, constellation mythology.
+- Tested with agent-browser: console clean, layout healthy (header 167px, sky map 260px).
+- VLM rated 8/10. Suggestion: "Add interactive tooltips for celestial objects."
+- No critical bugs found.
+
+**New Features:**
+1. **Interactive hover tooltips** (SkyMap):
+   - Rich tooltip card follows the cursor when hovering a star.
+   - Shows: spectral color swatch, star name, constellation, magnitude, spectral type, distance.
+   - Physical properties preview (when available): temperature, mass, radius, luminosity.
+   - Bayer/Flamsteed designations + HIP ID.
+   - Hint text: "Click to inspect · Press Esc to deselect."
+   - Positioned near cursor with bounds-aware placement (flips left if near right edge).
+   - Uses `mousePos` state (throttled — only updates when hovering a star) to avoid excessive re-renders.
+   - Tooltip is `pointer-events-none` so it doesn't interfere with star clicks.
+
+2. **Time Jump panel** (TimeJump.tsx):
+   - New Calendar "Time Jump" button in the toolbar.
+   - Computes key astronomical events for the next 48 hours at 2-min resolution:
+     - Sunset, Sunrise
+     - Astronomical dusk/dawn (sun at -18°)
+     - Local midnight
+     - Next meteor shower peak (with approximate 2am local time)
+   - Each event is a clickable button that jumps `currentTime` to that event.
+   - Color-coded icons: Sunset (orange), Astro dusk/dawn (sky), Midnight (violet), Meteor peak (amber).
+   - Handles polar conditions gracefully (shows "No events found").
+   - Verified: jumped from Jul 9 10:45 to Jul 10 20:21 (sunset) successfully.
+
+**Bug Fixes:**
+- Fixed React Compiler "Cannot access refs during render" error: replaced `containerRef.current?.clientWidth` in the tooltip render with a static `800` fallback. The ref is only accessed in event handlers now.
+- Fixed `mousePosRef` ref-during-render: added `mousePos` state that updates (throttled) in the mouse move handler, and the tooltip reads from state instead of ref.
+- Added `useState` to React imports.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning.
+- agent-browser: Time Jump popover shows all events, clicking an event jumps the time correctly.
+- Console: clean.
+- VLM: 8/10, confirmed twilight/night scene after time jump.
+
+Stage Summary:
+- Added 2 new features: interactive hover tooltips with physical properties, Time Jump panel.
+- App now has comprehensive interaction (hover, click, drag, measure, time-jump) and information display.
+- All features integrate cleanly with the existing render pipeline and store.
+
+Unresolved/Minor:
+- The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
+- Time Jump sampling uses 2-min resolution (1440 steps over 48h) which is approximate but fast.
+- Could add ISS/satellite tracking in future rounds.
