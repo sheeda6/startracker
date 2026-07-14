@@ -55,6 +55,7 @@ export function SearchBar() {
   const search = useStarTracker((s) => s.search);
   const setSearch = useStarTracker((s) => s.setSearch);
   const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
+  const setView = useStarTracker((s) => s.setView);
   const [focused, setFocused] = useState(false);
 
   const q = search.trim();
@@ -137,6 +138,8 @@ export function SearchBar() {
                 star={s}
                 onSelect={() => {
                   setSelectedHip(s.hip);
+                  // Zoom in on the star for "go to" effect
+                  setView({ zoom: Math.min(4, Math.max(2, useStarTracker.getState().view.zoom)) });
                   setFocused(false);
                 }}
               />

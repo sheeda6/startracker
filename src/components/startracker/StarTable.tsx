@@ -23,6 +23,7 @@ import {
   createColumnHelper,
   type SortingState,
   type ColumnDef,
+  type VisibilityState,
 } from "@tanstack/react-table";
 import { useStarTracker } from "@/lib/store";
 import { STARS, spectralColor, type Star } from "@/data/stars";
@@ -51,6 +52,7 @@ import {
   ChevronsRight,
   Eye,
   EyeOff,
+  Columns3,
 } from "lucide-react";
 
 interface StarRow extends Star {
@@ -71,6 +73,13 @@ export function StarTable() {
   const selectedHip = useStarTracker((s) => s.selectedHip);
   const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
   const [sorting, setSorting] = useState<SortingState>([{ id: "mag", desc: false }]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    flamsteed: false,
+    hd: false,
+    ra: false,
+    dec: false,
+  });
+  const [showColMenu, setShowColMenu] = useState(false);
 
   // Throttle: rise/set times only need to recompute when the calendar DATE
   // changes (not every 100ms tick). At ×3600 fast-forward this prevents
@@ -277,8 +286,9 @@ export function StarTable() {
   const table = useReactTable({
     data: filteredRows,
     columns,
-    state: { sorting },
+    state: { sorting, columnVisibility },
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -297,6 +307,40 @@ export function StarTable() {
           </Badge>
         </div>
         <div className="flex items-center gap-1">
+          {/* Column visibility toggle */}
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 border-white/10 bg-transparent px-2 text-[10px] text-slate-400 hover:bg-white/10 hover:text-slate-100"
+              onClick={() => setShowColMenu(!showColMenu)}
+            >
+              <Columns3 className="mr-1 h-3 w-3" />
+              Columns
+            </Button>
+            {showColMenu && (
+              <div className="absolute right-0 top-9 z-30 w-40 rounded-md border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-md">
+                <div className="mb-1 text-[9px] uppercase tracking-wide text-slate-500">Toggle columns</div>
+                <div className="grid grid-cols-1 gap-0.5">
+                  {table.getAllLeafColumns().map((col) => (
+                    <label
+                      key={col.id}
+                      className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[10px] text-slate-300 hover:bg-white/5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={col.getIsVisible()}
+                        onChange={col.getToggleVisibilityHandler()}
+                        className="h-2.5 w-2.5 accent-amber-400"
+                      />
+                      {typeof col.columnDef.header === "string" ? col.columnDef.header : col.id}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="mx-1 h-4 w-px bg-white/10" />
           <Button
             variant="outline"
             size="icon"

@@ -805,3 +805,52 @@ Unresolved/Minor:
 - The "1 Issue" Next.js dev badge is the cross-origin dev-origins suggestion (not a real bug).
 - Share URL hash is cleared by the prompt dialog in agent-browser; works correctly in real browsers.
 - Could add ISS/satellite tracking in future rounds.
+
+---
+Task ID: task-completion
+Agent: main (Z.ai Code)
+Task: Complete all previously-proposed but unimplemented features from earlier rounds.
+
+Work Log:
+
+**Assessment:**
+- Reviewed worklog across all 10 rounds — all round-specific tasks were completed.
+- Identified 3 features that were proposed in earlier round todos as "pending" but never implemented:
+  1. Moon phases calendar widget (proposed in round 10)
+  2. Column visibility toggle for StarTable (proposed in round 10)
+  3. "Go to Star" feature (proposed in round 8)
+
+**Completed Features:**
+
+1. **Moon Phases Calendar** (MoonPhasesCalendar.tsx):
+   - New CalendarDays "Moon Calendar" button in the toolbar.
+   - Shows 30 days of moon phases in a 5-6 column grid.
+   - Each day: SVG moon icon with correct illumination, weekday, date, illumination %.
+   - Notable phase days (New, Quarter, Full) highlighted with amber border.
+   - Phase legend at the bottom (New, First Qtr, Full, Last Qtr).
+   - Computes moon altitude at local midnight for each day.
+   - Verified: shows Jul 13 (1%) through Aug 11 with correct phase progression.
+
+2. **Column visibility toggle** (StarTable.tsx):
+   - New "Columns" button in the StarTable header bar.
+   - Dropdown menu with checkboxes for all 17 columns.
+   - Uses TanStack Table's `columnVisibility` state and `getToggleVisibilityHandler()`.
+   - Defaults: hides Flamsteed, HD, RA, Dec columns (less commonly needed).
+   - Users can toggle any column on/off to customize the table density.
+   - Verified: dropdown shows all 17 columns with checkboxes.
+
+3. **Go to Star** (SearchBar.tsx):
+   - When a search result is clicked, the view zooms in (to at least 2×, max 4×).
+   - Combined with the existing star selection, this creates a "go to" effect.
+   - Uses `setView({ zoom: ... })` to apply the zoom.
+
+**Verification:**
+- Lint: 0 errors, 1 expected warning (TanStack Table incompatible-library).
+- agent-browser: Moon Calendar shows 30-day grid, Columns toggle shows all 17 checkboxes, page loads clean.
+- Console: clean.
+- VLM: 8/10.
+
+Stage Summary:
+- All previously-proposed pending features are now implemented.
+- App is feature-complete with 22 components covering: sky map, star details, star table, time controls, observer settings, search, filters, layers, compass, measurement, guided tour, sky summary, observing conditions, time jump, tonight at a glance, proper motion demo, settings export, moon phases calendar, welcome overlay, night mode, magnitude filter, constellation browser.
+- No outstanding TODO items remain in the codebase.
