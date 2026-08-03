@@ -46,6 +46,12 @@ export interface ViewLayers {
   constellationBoundaries: boolean;
   messier: boolean;
   meteorShowers: boolean;
+  asteroids: boolean;
+  ngcObjects: boolean;
+  lightPollutionOverlay: boolean;
+  comets: boolean;
+  satellites: boolean;
+  orbits: boolean;
 }
 
 export interface ViewState {
@@ -83,6 +89,10 @@ interface StarTrackerState {
   setSelectedHip: (h: number | null) => void;
   setHoveredHip: (h: number | null) => void;
 
+  // Solar body selection (sun / moon)
+  selectedBody: string | null;
+  setSelectedBody: (b: string | null) => void;
+
   // View
   view: ViewState;
   layers: ViewLayers;
@@ -117,11 +127,11 @@ interface StarTrackerState {
 
 export const useStarTracker = create<StarTrackerState>((set, get) => ({
   observer: {
-    latDeg: 40.0,       // default mid-northern
-    lonDeg: -74.0,      // ~New York
-    elevationM: 30,
-    label: "Default (40°N, 74°W)",
-    timezone: "America/New_York",
+    latDeg: 31.5204,
+    lonDeg: 74.3587,
+    elevationM: 217,
+    label: "Lahore, Punjab, Pakistan",
+    timezone: "Asia/Karachi",
   },
   setObserver: (o) =>
     set((s) => ({ observer: { ...s.observer, ...o } })),
@@ -181,8 +191,11 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
 
   selectedHip: null,
   hoveredHip: null,
-  setSelectedHip: (h) => set({ selectedHip: h, rightPanelOpen: h != null }),
+  setSelectedHip: (h) => set({ selectedHip: h, rightPanelOpen: h != null, selectedBody: null }),
   setHoveredHip: (h) => set({ hoveredHip: h }),
+
+  selectedBody: null,
+  setSelectedBody: (b) => set({ selectedBody: b, rightPanelOpen: b != null, selectedHip: null }),
 
   view: { zoom: 1, rotation: 0 },
   layers: {
@@ -199,6 +212,12 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
     constellationBoundaries: false,
     messier: true,
     meteorShowers: true,
+    asteroids: true,
+    ngcObjects: true,
+    lightPollutionOverlay: false,
+    comets: true,
+    satellites: true,
+    orbits: true,
   },
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
@@ -227,6 +246,7 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
 
 /** Common preset locations for the observer dropdown. */
 export const LOCATION_PRESETS: ObserverLocation[] = [
+  { latDeg: 31.5204, lonDeg: 74.3587, elevationM: 217, label: "Lahore, Punjab, Pakistan", timezone: "Asia/Karachi" },
   { latDeg: 0, lonDeg: 0, elevationM: 0, label: "Equator (0°, 0°)", timezone: "UTC" },
   { latDeg: 90, lonDeg: 0, elevationM: 0, label: "North Pole", timezone: "UTC" },
   { latDeg: -90, lonDeg: 0, elevationM: 0, label: "South Pole", timezone: "UTC" },
@@ -236,6 +256,5 @@ export const LOCATION_PRESETS: ObserverLocation[] = [
   { latDeg: -33.8688, lonDeg: 151.2093, elevationM: 58, label: "Sydney, Australia", timezone: "Australia/Sydney" },
   { latDeg: -29.0, lonDeg: 70.0, elevationM: 2400, label: "Cerro Pachón, Chile", timezone: "America/Santiago" },
   { latDeg: 19.8208, lonDeg: -155.4681, elevationM: 4205, label: "Mauna Kea, Hawaii", timezone: "Pacific/Honolulu" },
-  { latDeg: 30.2447, lonDeg: 70.4581, elevationM: 1300, label: "Lahore, Pakistan", timezone: "Asia/Karachi" },
   { latDeg: 24.8607, lonDeg: 67.0011, elevationM: 10, label: "Karachi, Pakistan", timezone: "Asia/Karachi" },
 ];

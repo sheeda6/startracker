@@ -90,7 +90,7 @@ wait_for_service() {
 	echo "Waiting for $service_name to be ready on $host:$port..."
 
 	while [ "$attempt" -le "$max_attempts" ]; do
-		if curl -s --connect-timeout 2 --max-time 5 "http://$host:$port" >/dev/null 2>&1; then
+		if curl -s --connect-timeout 2 --max-time 120 "http://$host:$port" >/dev/null 2>&1; then
 			echo "$service_name is ready!"
 			return 0
 		fi
@@ -132,19 +132,26 @@ log_step_end "bun run db:push"
 
 log_step_start "Starting Next.js dev server"
 echo "[BUN] Starting development server..."
-bun run dev &
+bunx next dev -p 3001 -H 0.0.0.0 --webpack > dev.log 2>&1 &
 DEV_PID=$!
 log_step_end "Starting Next.js dev server"
 
 log_step_start "Waiting for Next.js dev server"
-wait_for_service "localhost" "3000" "Next.js dev server"
+echo "Waiting for Next.js to report ready (watching dev.log)..."
+max_wait=60
+waited=0
+while [ "$waited" -lt "$max_wait" ]; do
+	if grep -q "Ready in" dev.log 2>/dev/null; then
+		echo "Next.js dev server is ready!"
+		break
+	fi
+	sleep 1
+	waited=$((waited + 1))
+done
+if [ "$waited" -ge "$max_wait" ]; then
+	echo "WARNING: Server did not report ready after ${max_wait}s. Check dev.log for errors."
+fi
 log_step_end "Waiting for Next.js dev server"
-
-log_step_start "Health check"
-echo "[BUN] Performing health check..."
-curl -fsS localhost:3000 >/dev/null
-echo "[BUN] Health check passed"
-log_step_end "Health check"
 
 start_mini_services
 

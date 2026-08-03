@@ -42,6 +42,12 @@ import {
 import { equatorialToHorizontal } from "@/lib/astro/coordinates";
 import { formatHMS, formatDMS, formatDeg } from "@/lib/astro/time";
 import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
+import { computeAsteroidPositions } from "@/data/asteroids";
+import { fetchLiveTLEs, computeSatellitePositions } from "@/data/satellites";
+import { computeCometPositions } from "@/data/comets";
+import { NGC_OBJECTS, NGC_TYPE_COLORS } from "@/data/ngc";
+import { useLightPollution } from "@/hooks/useLightPollution";
+import { getOrbitTracks } from "@/lib/astro/orbits";
 
 interface RenderedStar {
   star: Star;
@@ -80,6 +86,12 @@ export function SkyMap() {
   const setMeasureEnd = useStarTracker((s) => s.setMeasureEnd);
   const properMotionYear = useStarTracker((s) => s.properMotionYear);
 
+  const selectedBody = useStarTracker((s) => s.selectedBody);
+  const setSelectedBody = useStarTracker((s) => s.setSelectedBody);
+  const [hoveredBody, setHoveredBody] = useState<string | null>(null);
+  const lp = useLightPollution(observer);
+  const renderedBodiesRef = useRef<{ id: string; x: number; y: number; r: number }[]>([]);
+
   // Precomputed frame (memoized per time/observer)
   const frame: FrameContext = useMemo(
     () =>
@@ -91,6 +103,10 @@ export function SkyMap() {
       }),
     [currentTime, observer.latDeg, observer.lonDeg, observer.elevationM]
   );
+
+  useEffect(() => {
+    fetchLiveTLEs();
+  }, []);
 
   // Tick the clock in realtime modes
   useEffect(() => {
@@ -143,11 +159,12 @@ export function SkyMap() {
     const cx = W / 2;
     const cy = H / 2;
     const radius = Math.min(W, H) / 2 - 8 * dpr;
+    const zoomedRadius = radius * view.zoom;
     const scale = Math.min(W, H) / 600;
     const timeMs = performance.now();
 
     // 1. Sky background gradient (dark zenith → lighter horizon)
-    const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, zoomedRadius);
     bgGrad.addColorStop(0, "#020412");
     bgGrad.addColorStop(0.55, "#070d24");
     bgGrad.addColorStop(1, "#101b3a");
@@ -155,53 +172,85 @@ export function SkyMap() {
     ctx.fillRect(0, 0, W, H);
 
     // 1b. Atmospheric haze near horizon (subtle blue glow)
-    const hazeGrad = ctx.createRadialGradient(cx, cy, radius * 0.7, cx, cy, radius);
+    const hazeGrad = ctx.createRadialGradient(cx, cy, zoomedRadius * 0.7, cx, cy, zoomedRadius);
     hazeGrad.addColorStop(0, "rgba(30, 60, 120, 0)");
     hazeGrad.addColorStop(0.7, "rgba(30, 60, 120, 0.03)");
     hazeGrad.addColorStop(1, "rgba(60, 100, 180, 0.08)");
     ctx.fillStyle = hazeGrad;
     ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.arc(cx, cy, zoomedRadius, 0, 2 * Math.PI);
     ctx.fill();
+
+    // Light pollution overlay (if enabled)
+    if (layers.lightPollutionOverlay && !lp.loading) {
+      const lpColors = [
+        "rgba(200, 200, 200, 0)", // Bortle 1
+        "rgba(200, 200, 200, 0)", // Bortle 2
+        "rgba(251, 191, 36, 0.02)", // Bortle 3
+        "rgba(251, 191, 36, 0.05)", // Bortle 4
+        "rgba(245, 158, 11, 0.10)", // Bortle 5
+        "rgba(245, 158, 11, 0.15)", // Bortle 6
+        "rgba(217, 119, 6, 0.22)",  // Bortle 7
+        "rgba(180, 83, 9, 0.30)",   // Bortle 8
+        "rgba(146, 64, 14, 0.40)",  // Bortle 9
+      ];
+      const lpGlow = lpColors[lp.bortle - 1] || "rgba(0,0,0,0)";
+      if (lp.bortle > 2) {
+        const glowGrad = ctx.createRadialGradient(cx, cy, zoomedRadius * 0.4, cx, cy, zoomedRadius);
+        glowGrad.addColorStop(0, "rgba(251, 191, 36, 0)");
+        glowGrad.addColorStop(0.5, lpGlow.replace(/[\d\.]+\)$/, "0.04)"));
+        glowGrad.addColorStop(1, lpGlow);
+        ctx.fillStyle = glowGrad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, zoomedRadius, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
 
     // 2. Outside-horizon mask (ground)
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, W, H);
-    ctx.arc(cx, cy, radius, 0, 2 * Math.PI, true);
+    ctx.arc(cx, cy, zoomedRadius, 0, 2 * Math.PI, true);
     ctx.fillStyle = "rgba(8, 5, 2, 0.92)";
     ctx.fill("evenodd");
     ctx.restore();
 
     // 3. Milky Way band (procedural)
     if (layers.milkyWay) {
-      drawMilkyWay(ctx, cx, cy, radius, frame, layers.refraction, view.rotation);
+      drawMilkyWay(ctx, cx, cy, zoomedRadius, frame, layers.refraction, view.rotation, view.zoom, dpr);
     }
 
     // 4. Alt/Az grid
     if (layers.grid) {
-      drawAltAzGrid(ctx, cx, cy, radius, view.rotation, dpr);
+      drawAltAzGrid(ctx, cx, cy, zoomedRadius, view.rotation, dpr);
     }
+
+    const latRad = (observer.latDeg * Math.PI) / 180;
 
     // 5. Celestial equator
     if (layers.equator) {
-      drawCelestialCircle(ctx, cx, cy, radius, frame, 0, view.rotation, layers.refraction, "#3b6ea5", 1 * dpr);
+      drawCelestialCircle(ctx, cx, cy, zoomedRadius, frame, 0, view.rotation, layers.refraction, "#3b6ea5", 1 * dpr);
     }
     // 6. Ecliptic
     if (layers.ecliptic) {
-      drawCelestialCircle(ctx, cx, cy, radius, frame, frame.epsTrue, view.rotation, layers.refraction, "#a87c2f", 1 * dpr);
+      drawCelestialCircle(ctx, cx, cy, zoomedRadius, frame, frame.epsTrue, view.rotation, layers.refraction, "#a87c2f", 1 * dpr);
+    }
+
+    // 6b. Orbit/daily path for selected object or star
+    if (layers.orbits && (selectedBody || selectedHip != null)) {
+      drawOrbitTracks(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, currentTime, observer.latDeg, observer.lonDeg, observer.elevationM, latRad, selectedBody, selectedHip);
     }
 
     // 7. Constellation lines
     const renderedStars: RenderedStar[] = [];
     if (layers.constellations) {
-      drawConstellationLines(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, selectedHip);
+      drawConstellationLines(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, selectedHip);
     }
 
     // 8. Stars
     const sinPhi = frame.sinLat;
     const cosPhi = frame.cosLat;
-    const latRad = (observer.latDeg * Math.PI) / 180;
 
     // Sort by magnitude (brightest last so they render on top)
     const sortedStars = [...STARS].sort((a, b) => b.mag - a.mag);
@@ -223,7 +272,7 @@ export function SkyMap() {
       const proj = projectStereographic({
         cx,
         cy,
-        radius,
+        radius: zoomedRadius,
         alt,
         az: az + view.rotation,
       });
@@ -387,18 +436,40 @@ export function SkyMap() {
     }
 
     // 9b. Solar system bodies (Sun, Moon, planets)
-    if (layers.solarSystem) {
-      drawSolarSystem(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
-    }
+    const renderedBodies = layers.solarSystem
+      ? drawSolarSystem(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad, view.zoom)
+      : [];
 
     // 9c. Messier deep-sky objects
-    if (layers.messier) {
-      drawMessier(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
-    }
+    const renderedMessier = layers.messier
+      ? drawMessier(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad, view.zoom)
+      : [];
 
-    // 9d. Meteor shower radiants
+    // 9d. NGC/IC deep-sky objects
+    const renderedNGC = layers.ngcObjects
+      ? drawNGC(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, latRad, view.zoom)
+      : [];
+
+    // 9e. Asteroids
+    const renderedAsteroids = layers.asteroids
+      ? drawAsteroids(ctx, cx, cy, zoomedRadius, view.rotation, layers.refraction, dpr, currentTime, latRad, view.zoom, frame)
+      : [];
+
+    // 9f. Comets
+    const renderedComets = layers.comets
+      ? drawComets(ctx, cx, cy, zoomedRadius, view.rotation, layers.refraction, dpr, currentTime, latRad, view.zoom, frame)
+      : [];
+
+    // 9g. Satellites
+    const renderedSatellites = layers.satellites
+      ? drawSatellites(ctx, cx, cy, zoomedRadius, view.rotation, layers.refraction, dpr, currentTime, observer.latDeg, observer.lonDeg, observer.elevationM, view.zoom)
+      : [];
+
+    renderedBodiesRef.current = [...renderedBodies, ...renderedMessier, ...renderedNGC, ...renderedAsteroids, ...renderedComets, ...renderedSatellites];
+
+    // 9h. Meteor shower radiants
     if (layers.meteorShowers) {
-      drawMeteorRadiants(ctx, cx, cy, radius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad);
+      drawMeteorRadiants(ctx, cx, cy, zoomedRadius, frame, view.rotation, layers.refraction, dpr, currentTime, latRad, view.zoom);
     }
 
     // 10. Hovered star ring
@@ -412,6 +483,18 @@ export function SkyMap() {
         ctx.stroke();
       }
     }
+    // 10b. Hovered body ring
+    if (hoveredBody != null) {
+      const rb = renderedBodies.find((b) => b.id === hoveredBody);
+      if (rb) {
+        ctx.strokeStyle = "rgba(186, 230, 253, 0.9)";
+        ctx.lineWidth = 1.2 * dpr;
+        ctx.beginPath();
+        ctx.arc(rb.x, rb.y, rb.r + 5 * dpr, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+
     // 11. Selected star ring
     if (selectedHip != null) {
       const rs = renderedStars.find((s) => s.star.hip === selectedHip);
@@ -435,6 +518,32 @@ export function SkyMap() {
         ctx.lineTo(rs.x, rs.y - 10 * dpr);
         ctx.moveTo(rs.x, rs.y + 10 * dpr);
         ctx.lineTo(rs.x, rs.y + 18 * dpr);
+        ctx.stroke();
+      }
+    }
+    // 11a. Selected body ring
+    if (selectedBody != null) {
+      const rb = renderedBodies.find((b) => b.id === selectedBody);
+      if (rb) {
+        ctx.strokeStyle = "#fbbf24";
+        ctx.lineWidth = 1.6 * dpr;
+        ctx.setLineDash([4 * dpr, 3 * dpr]);
+        ctx.beginPath();
+        ctx.arc(rb.x, rb.y, rb.r + 7 * dpr, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Crosshair
+        ctx.strokeStyle = "rgba(251, 191, 36, 0.5)";
+        ctx.lineWidth = 0.8 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(rb.x - 18 * dpr, rb.y);
+        ctx.lineTo(rb.x - 10 * dpr, rb.y);
+        ctx.moveTo(rb.x + 10 * dpr, rb.y);
+        ctx.lineTo(rb.x + 18 * dpr, rb.y);
+        ctx.moveTo(rb.x, rb.y - 18 * dpr);
+        ctx.lineTo(rb.x, rb.y - 10 * dpr);
+        ctx.moveTo(rb.x, rb.y + 10 * dpr);
+        ctx.lineTo(rb.x, rb.y + 18 * dpr);
         ctx.stroke();
       }
     }
@@ -511,7 +620,7 @@ export function SkyMap() {
 
     // 12. Cardinal directions
     if (layers.cardinalDirections) {
-      drawCardinalDirections(ctx, cx, cy, radius, view.rotation, dpr);
+      drawCardinalDirections(ctx, cx, cy, zoomedRadius, view.rotation, dpr);
     }
 
     // 13. Zenith marker
@@ -527,7 +636,7 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
-  }, [frame, layers, view, filters, selectedHip, hoveredHip, observer.latDeg, currentTime, measureMode, measureStart, measureEnd, properMotionYear]);
+  }, [frame, layers, view, filters, selectedHip, hoveredHip, selectedBody, hoveredBody, lp, observer.latDeg, currentTime, measureMode, measureStart, measureEnd, properMotionYear]);
 
   // Sync the latest render closure into the ref (inside an effect, not during render).
   useEffect(() => {
@@ -592,24 +701,40 @@ export function SkyMap() {
 
       const x = (e.clientX - rect.left) * dpr;
       const y = (e.clientY - rect.top) * dpr;
-      // Find nearest star within tolerance
+
+      // Check bodies first
+      let bestBody: string | null = null;
+      let bestBodyDist = 16 * dpr;
+      for (const rb of renderedBodiesRef.current) {
+        const d = Math.hypot(rb.x - x, rb.y - y);
+        if (d < bestBodyDist) {
+          bestBodyDist = d;
+          bestBody = rb.id;
+        }
+      }
+      setHoveredBody(bestBody);
+
+      // Find nearest star within tolerance (only if not hovering a body)
       let best: RenderedStar | null = null;
-      let bestDist = 16 * dpr;
-      for (const rs of renderedRef.current) {
-        const d = Math.hypot(rs.x - x, rs.y - y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = rs;
+      if (!bestBody) {
+        let bestDist = 16 * dpr;
+        for (const rs of renderedRef.current) {
+          const d = Math.hypot(rs.x - x, rs.y - y);
+          if (d < bestDist) {
+            bestDist = d;
+            best = rs;
+          }
         }
       }
       setHoveredHip(best ? best.star.hip : null);
-      // Throttle mouse position state updates — only when hovering a star
-      if (best) {
+
+      // Throttle mouse position state updates — only when hovering a star or body
+      if (best || bestBody) {
         setMousePos({ x: px, y: py });
       }
-      canvas.style.cursor = best ? "pointer" : "grab";
+      canvas.style.cursor = (best || bestBody) ? "pointer" : "grab";
     },
-    [setHoveredHip, setView, setMousePos]
+    [setHoveredHip, setView, setMousePos, setHoveredBody]
   );
 
   const handleClick = useCallback(
@@ -625,35 +750,56 @@ export function SkyMap() {
       const dpr = dprRef.current;
       const x = (e.clientX - rect.left) * dpr;
       const y = (e.clientY - rect.top) * dpr;
-      let best: RenderedStar | null = null;
-      let bestDist = 16 * dpr;
-      for (const rs of renderedRef.current) {
-        const d = Math.hypot(rs.x - x, rs.y - y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = rs;
+
+      // Check bodies first
+      let bestBody: string | null = null;
+      let bestBodyDist = 16 * dpr;
+      for (const rb of renderedBodiesRef.current) {
+        const d = Math.hypot(rb.x - x, rb.y - y);
+        if (d < bestBodyDist) {
+          bestBodyDist = d;
+          bestBody = rb.id;
         }
       }
-      if (best) {
-        if (measureMode) {
-          // In measure mode: first click sets start, second sets end
-          if (measureStart == null) {
-            setMeasureStart(best.star.hip);
-          } else if (measureStart !== best.star.hip) {
-            setMeasureEnd(best.star.hip);
-          }
-        } else {
-          setSelectedHip(best.star.hip);
+
+      if (bestBody) {
+        if (!measureMode) {
+          setSelectedBody(bestBody);
         }
       } else {
-        // If clicking empty sky, deselect (only in normal mode)
-        if (!measureMode) setSelectedHip(null);
+        let best: RenderedStar | null = null;
+        let bestDist = 16 * dpr;
+        for (const rs of renderedRef.current) {
+          const d = Math.hypot(rs.x - x, rs.y - y);
+          if (d < bestDist) {
+            bestDist = d;
+            best = rs;
+          }
+        }
+        if (best) {
+          if (measureMode) {
+            // In measure mode: first click sets start, second sets end
+            if (measureStart == null) {
+              setMeasureStart(best.star.hip);
+            } else if (measureStart !== best.star.hip) {
+              setMeasureEnd(best.star.hip);
+            }
+          } else {
+            setSelectedHip(best.star.hip);
+          }
+        } else {
+          // If clicking empty sky, deselect (only in normal mode)
+          if (!measureMode) {
+            setSelectedHip(null);
+            setSelectedBody(null);
+          }
+        }
       }
     },
-    [setSelectedHip, measureMode, measureStart, setMeasureStart, setMeasureEnd]
+    [setSelectedHip, setSelectedBody, measureMode, measureStart, setMeasureStart, setMeasureEnd]
   );
 
-  // Double-click: zoom in on the clicked star
+  // Double-click: zoom in on the clicked star/body
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (measureMode) return;
@@ -663,6 +809,23 @@ export function SkyMap() {
       const dpr = dprRef.current;
       const x = (e.clientX - rect.left) * dpr;
       const y = (e.clientY - rect.top) * dpr;
+
+      let bestBody: string | null = null;
+      let bestBodyDist = 20 * dpr;
+      for (const rb of renderedBodiesRef.current) {
+        const d = Math.hypot(rb.x - x, rb.y - y);
+        if (d < bestBodyDist) {
+          bestBodyDist = d;
+          bestBody = rb.id;
+        }
+      }
+
+      if (bestBody) {
+        setSelectedBody(bestBody);
+        setView({ zoom: Math.min(4, useStarTracker.getState().view.zoom + 0.8) });
+        return;
+      }
+
       let best: RenderedStar | null = null;
       let bestDist = 20 * dpr;
       for (const rs of renderedRef.current) {
@@ -677,7 +840,7 @@ export function SkyMap() {
         setView({ zoom: Math.min(4, useStarTracker.getState().view.zoom + 0.8) });
       }
     },
-    [setSelectedHip, setView, measureMode]
+    [setSelectedHip, setSelectedBody, setView, measureMode]
   );
 
   const handleWheel = useCallback(
@@ -689,17 +852,97 @@ export function SkyMap() {
     [view.zoom, setView]
   );
 
-  // Touch support for mobile: single-finger drag to rotate, pinch to zoom
-  const touchRef = useRef<{ mode: "none" | "rotate" | "pinch"; lastX: number; lastDist: number }>({ mode: "none", lastX: 0, lastDist: 0 });
+  // Touch support for mobile: single-finger drag to rotate, pinch to zoom, tap to select
+  const touchRef = useRef<{
+    mode: "none" | "rotate" | "pinch";
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastDist: number;
+    startTime: number;
+    hasMoved: boolean;
+  }>({ mode: "none", startX: 0, startY: 0, lastX: 0, lastDist: 0, startTime: 0, hasMoved: false });
+
+  const selectObjectAtClientPos = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = dprRef.current;
+      const x = (clientX - rect.left) * dpr;
+      const y = (clientY - rect.top) * dpr;
+
+      // Check bodies first
+      let bestBody: string | null = null;
+      let bestBodyDist = 22 * dpr;
+      for (const rb of renderedBodiesRef.current) {
+        const d = Math.hypot(rb.x - x, rb.y - y);
+        if (d < bestBodyDist) {
+          bestBodyDist = d;
+          bestBody = rb.id;
+        }
+      }
+
+      if (bestBody) {
+        if (!measureMode) {
+          setSelectedBody(bestBody);
+        }
+      } else {
+        let best: RenderedStar | null = null;
+        let bestDist = 22 * dpr;
+        for (const rs of renderedRef.current) {
+          const d = Math.hypot(rs.x - x, rs.y - y);
+          if (d < bestDist) {
+            bestDist = d;
+            best = rs;
+          }
+        }
+        if (best) {
+          if (measureMode) {
+            if (measureStart == null) {
+              setMeasureStart(best.star.hip);
+            } else if (measureStart !== best.star.hip) {
+              setMeasureEnd(best.star.hip);
+            }
+          } else {
+            setSelectedHip(best.star.hip);
+          }
+        } else {
+          if (!measureMode) {
+            setSelectedHip(null);
+            setSelectedBody(null);
+          }
+        }
+      }
+    },
+    [setSelectedHip, setSelectedBody, measureMode, measureStart, setMeasureStart, setMeasureEnd]
+  );
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent<HTMLCanvasElement>) => {
       if (e.touches.length === 1) {
-        touchRef.current = { mode: "rotate", lastX: e.touches[0].clientX, lastDist: 0 };
+        const t = e.touches[0];
+        touchRef.current = {
+          mode: "rotate",
+          startX: t.clientX,
+          startY: t.clientY,
+          lastX: t.clientX,
+          lastDist: 0,
+          startTime: Date.now(),
+          hasMoved: false,
+        };
       } else if (e.touches.length === 2) {
         const dx = e.touches[0].clientX - e.touches[1].clientX;
         const dy = e.touches[0].clientY - e.touches[1].clientY;
-        touchRef.current = { mode: "pinch", lastX: 0, lastDist: Math.hypot(dx, dy) };
+        touchRef.current = {
+          mode: "pinch",
+          startX: 0,
+          startY: 0,
+          lastX: 0,
+          lastDist: Math.hypot(dx, dy),
+          startTime: Date.now(),
+          hasMoved: true,
+        };
       }
     },
     []
@@ -708,15 +951,23 @@ export function SkyMap() {
   const handleTouchMove = useCallback(
     (e: React.TouchEvent<HTMLCanvasElement>) => {
       if (touchRef.current.mode === "rotate" && e.touches.length === 1) {
-        const dx = e.touches[0].clientX - touchRef.current.lastX;
+        const t = e.touches[0];
+        const dist = Math.hypot(t.clientX - touchRef.current.startX, t.clientY - touchRef.current.startY);
+        if (dist > 8) {
+          touchRef.current.hasMoved = true;
+        }
+        const dx = t.clientX - touchRef.current.lastX;
         setView({ rotation: useStarTracker.getState().view.rotation + dx * 0.005 });
-        touchRef.current.lastX = e.touches[0].clientX;
+        touchRef.current.lastX = t.clientX;
       } else if (touchRef.current.mode === "pinch" && e.touches.length === 2) {
+        touchRef.current.hasMoved = true;
         const dx = e.touches[0].clientX - e.touches[1].clientX;
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         const dist = Math.hypot(dx, dy);
-        const delta = (dist - touchRef.current.lastDist) * 0.005;
-        setView({ zoom: Math.max(0.6, Math.min(4, useStarTracker.getState().view.zoom + delta)) });
+        if (touchRef.current.lastDist > 0) {
+          const delta = (dist - touchRef.current.lastDist) * 0.005;
+          setView({ zoom: Math.max(0.6, Math.min(4, useStarTracker.getState().view.zoom + delta)) });
+        }
         touchRef.current.lastDist = dist;
       }
     },
@@ -724,8 +975,14 @@ export function SkyMap() {
   );
 
   const handleTouchEnd = useCallback(() => {
-    touchRef.current = { mode: "none", lastX: 0, lastDist: 0 };
-  }, []);
+    const { mode, startX, startY, startTime, hasMoved } = touchRef.current;
+    const duration = Date.now() - startTime;
+    if (mode === "rotate" && !hasMoved && duration < 350) {
+      selectObjectAtClientPos(startX, startY);
+    }
+    touchRef.current = { mode: "none", startX: 0, startY: 0, lastX: 0, lastDist: 0, startTime: 0, hasMoved: false };
+  }, [selectObjectAtClientPos]);
+
 
   const handleExport = useCallback(() => {
     const canvas = canvasRef.current;
@@ -970,6 +1227,58 @@ function drawCelestialCircle(
 }
 
 /**
+ * Draw orbital trajectories for moving objects (planets, sun, moon, asteroids, comets, satellites).
+ */
+function drawOrbitTracks(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  frame: FrameContext,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latDeg: number,
+  lonDeg: number,
+  elevationM: number,
+  latRad: number,
+  selectedBody: string | null,
+  selectedHip: number | null
+) {
+  const tracks = getOrbitTracks(date, latDeg, lonDeg, elevationM, selectedBody, selectedHip);
+  for (const track of tracks) {
+    if (track.points.length < 2) continue;
+    ctx.save();
+    ctx.strokeStyle = track.color + "a0";
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.setLineDash([3 * dpr, 3 * dpr]);
+    ctx.beginPath();
+    let started = false;
+
+    for (const pt of track.points) {
+      const tr = transformStar(pt.ra, pt.dec, frame, latRad);
+      let alt = tr.horizontal.alt;
+      const az = tr.horizontal.az;
+      if (refraction && alt < Math.PI / 2) alt = refract(alt);
+      if (alt < -0.02) {
+        started = false;
+        continue;
+      }
+      const p = projectStereographic({ cx, cy, radius, alt, az: az + rotation });
+      if (!started) {
+        ctx.moveTo(p.x, p.y);
+        started = true;
+      } else {
+        ctx.lineTo(p.x, p.y);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/**
  * Draw all constellation stick-figure lines. Only stars present in the catalog
  * are projected; lines with missing stars are skipped.
  */
@@ -1069,7 +1378,9 @@ function drawMilkyWay(
   radius: number,
   frame: FrameContext,
   refraction: boolean,
-  rotation: number
+  rotation: number,
+  zoom: number,
+  dpr: number
 ) {
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
@@ -1114,7 +1425,7 @@ function drawMilkyWay(
       if (alt < 0) continue;
       const p = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
       const alpha = density * (1 - Math.abs(bDeg) / 9) * 0.12;
-      const r = 18;
+      const r = 18 * dpr * zoom;
       const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
       g.addColorStop(0, `rgba(190, 200, 255, ${alpha})`);
       g.addColorStop(1, "rgba(190, 200, 255, 0)");
@@ -1142,8 +1453,11 @@ function drawSolarSystem(
   refraction: boolean,
   dpr: number,
   date: Date,
-  latRad: number
-) {
+  latRad: number,
+  zoom: number
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
+
   // Planets
   const planets = planetPositions(date);
   for (const p of planets) {
@@ -1152,7 +1466,7 @@ function drawSolarSystem(
     if (refraction && alt < Math.PI / 2) alt = refract(alt);
     if (alt < -0.02) continue;
     const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
-    const r = 4 * dpr;
+    const r = 4 * dpr * Math.sqrt(zoom);
     // Glow
     const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 4);
     glow.addColorStop(0, p.color + "aa");
@@ -1166,6 +1480,7 @@ function drawSolarSystem(
     ctx.beginPath();
     ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
     ctx.fill();
+    rendered.push({ id: `planet_${p.name.toLowerCase()}`, x: proj.x, y: proj.y, r: Math.max(r, 6 * dpr) });
     // Symbol + name
     ctx.font = `bold ${11 * dpr}px ui-sans-serif, system-ui`;
     ctx.textAlign = "left";
@@ -1182,7 +1497,8 @@ function drawSolarSystem(
     if (refraction && alt < Math.PI / 2) alt = refract(alt);
     if (alt > -0.02) {
       const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
-      const r = 8 * dpr;
+      const r = 8 * dpr * zoom;
+      rendered.push({ id: "sun", x: proj.x, y: proj.y, r });
       // Outer corona glow
       const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 5);
       glow.addColorStop(0, "rgba(253, 224, 71, 0.6)");
@@ -1229,8 +1545,9 @@ function drawSolarSystem(
     if (refraction && alt < Math.PI / 2) alt = refract(alt);
     if (alt > -0.02) {
       const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
-      const r = 7 * dpr;
+      const r = 7 * dpr * zoom;
       const phase = moonPhase(date);
+      rendered.push({ id: "moon", x: proj.x, y: proj.y, r });
       // Soft glow
       const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 3);
       glow.addColorStop(0, "rgba(226, 232, 240, 0.3)");
@@ -1268,6 +1585,8 @@ function drawSolarSystem(
       ctx.fillText(`☽ Moon ${(illum * 100).toFixed(0)}%`, proj.x + r + 6 * dpr, proj.y);
     }
   }
+
+  return rendered;
 }
 
 /**
@@ -1294,8 +1613,10 @@ function drawMessier(
   refraction: boolean,
   dpr: number,
   _date: Date,
-  latRad: number
-) {
+  latRad: number,
+  zoom: number
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
   for (const m of MESSIER) {
     const tr = transformStar(m.ra, m.dec, frame, latRad);
     let alt = tr.horizontal.alt;
@@ -1312,7 +1633,7 @@ function drawMessier(
 
     // Scale the glyph by angular size, but clamp to a sensible range so
     // large angular extents (M31 ~3°) don't dominate the chart.
-    const sizePx = Math.max(3 * dpr, Math.min(14 * dpr, (m.size / 30) * 6 * dpr));
+    const sizePx = Math.max(3 * dpr, Math.min(14 * dpr, (m.size / 30) * 6 * dpr)) * zoom;
 
     drawMessierGlyph(ctx, m, proj.x, proj.y, sizePx, dpr);
 
@@ -1322,7 +1643,9 @@ function drawMessier(
     ctx.textBaseline = "middle";
     ctx.fillStyle = MESSIER_TYPE_COLORS[m.type];
     ctx.fillText(`M${m.number}`, proj.x + sizePx + 3 * dpr, proj.y);
+    rendered.push({ id: `messier_${m.number}`, x: proj.x, y: proj.y, r: Math.max(sizePx, 6 * dpr) });
   }
+  return rendered;
 }
 
 /** Draw the type-specific glyph for a Messier object at (x, y). */
@@ -1471,7 +1794,8 @@ function drawMeteorRadiants(
   refraction: boolean,
   dpr: number,
   date: Date,
-  latRad: number
+  latRad: number,
+  zoom: number
 ) {
   const showers = getActiveShowers(date);
   if (showers.length === 0) return;
@@ -1499,8 +1823,8 @@ function drawMeteorRadiants(
     });
 
     const nearPeak = daysToPeak(shower, date) <= 1;
-    const size = 6 * dpr * (nearPeak ? 1.4 : 1);
-    const glowRadius = (nearPeak ? 22 : 12) * dpr;
+    const size = 6 * dpr * (nearPeak ? 1.4 : 1) * zoom;
+    const glowRadius = (nearPeak ? 22 : 12) * dpr * zoom;
 
     ctx.save();
 
@@ -1572,3 +1896,292 @@ function drawMeteorRadiants(
     ctx.restore();
   }
 }
+
+function drawAsteroids(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latRad: number,
+  zoom: number,
+  frame: FrameContext
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
+  const asteroids = computeAsteroidPositions(date);
+  for (const ast of asteroids) {
+    const tr = transformStar(ast.ra, ast.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue;
+
+    const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+    const r = 3 * dpr * Math.sqrt(zoom);
+
+    // Draw diamond glyph (◇)
+    ctx.strokeStyle = ast.color;
+    ctx.lineWidth = 1 * dpr;
+    ctx.fillStyle = ast.color + "20";
+    ctx.beginPath();
+    ctx.moveTo(proj.x, proj.y - r);
+    ctx.lineTo(proj.x + r, proj.y);
+    ctx.lineTo(proj.x, proj.y + r);
+    ctx.lineTo(proj.x - r, proj.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Draw tiny trail tick (faint grey line)
+    ctx.strokeStyle = "rgba(150, 150, 150, 0.4)";
+    ctx.beginPath();
+    ctx.moveTo(proj.x, proj.y);
+    ctx.lineTo(proj.x - 2 * r, proj.y + r);
+    ctx.stroke();
+
+    // Label
+    ctx.font = `${9 * dpr}px ui-sans-serif, system-ui`;
+    ctx.fillStyle = "rgba(200, 210, 225, 0.7)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(ast.name, proj.x + r + 3 * dpr, proj.y);
+    rendered.push({ id: `asteroid_${ast.name.toLowerCase()}`, x: proj.x, y: proj.y, r: Math.max(r, 6 * dpr) });
+  }
+  return rendered;
+}
+
+function drawComets(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latRad: number,
+  zoom: number,
+  frame: FrameContext
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
+  const comets = computeCometPositions(date);
+  for (const comet of comets) {
+    const tr = transformStar(comet.ra, comet.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue;
+
+    const proj = projectStereographic({ cx, cy, radius, alt, az: tr.horizontal.az + rotation });
+    const r = 3 * dpr * Math.sqrt(zoom);
+
+    // Draw comet core (circle with a glowing tail)
+    ctx.fillStyle = comet.color;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Draw tail pointing away from the sun (rough approximation, we just draw it up/right for simplicity here or radial)
+    const tailGrad = ctx.createLinearGradient(proj.x, proj.y, proj.x + r * 5, proj.y - r * 5);
+    tailGrad.addColorStop(0, comet.color + "80");
+    tailGrad.addColorStop(1, comet.color + "00");
+    ctx.strokeStyle = tailGrad;
+    ctx.lineWidth = r;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(proj.x, proj.y);
+    ctx.lineTo(proj.x + r * 5, proj.y - r * 5);
+    ctx.stroke();
+
+    // Label
+    ctx.font = `${9 * dpr}px ui-sans-serif, system-ui`;
+    ctx.fillStyle = "rgba(200, 210, 225, 0.7)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("☄️ " + comet.name, proj.x + r + 3 * dpr, proj.y + r + 3 * dpr);
+    rendered.push({ id: `comet_${comet.id.toLowerCase()}`, x: proj.x, y: proj.y, r: Math.max(r, 6 * dpr) });
+  }
+  return rendered;
+}
+
+function drawSatellites(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  date: Date,
+  latDeg: number,
+  lonDeg: number,
+  elevationM: number,
+  zoom: number
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
+  const satellites = computeSatellitePositions(date, latDeg, lonDeg, elevationM);
+  for (const sat of satellites) {
+    let alt = (sat.altDeg * Math.PI) / 180;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue;
+
+    const az = (sat.azDeg * Math.PI) / 180;
+    const proj = projectStereographic({ cx, cy, radius, alt, az: az + rotation });
+    const r = 2.5 * dpr * Math.sqrt(zoom);
+
+    // Draw satellite as a fast-moving glowing dot
+    ctx.fillStyle = sat.color;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+
+    const halo = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 3);
+    halo.addColorStop(0, sat.color + "80");
+    halo.addColorStop(1, sat.color + "00");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, r * 3, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Draw crosshair-like brackets
+    ctx.strokeStyle = sat.color + "a0";
+    ctx.lineWidth = 1 * dpr;
+    const s = r * 2;
+    ctx.beginPath();
+    ctx.moveTo(proj.x - s, proj.y - s / 2);
+    ctx.lineTo(proj.x - s, proj.y - s);
+    ctx.lineTo(proj.x - s / 2, proj.y - s);
+    
+    ctx.moveTo(proj.x + s, proj.y - s / 2);
+    ctx.lineTo(proj.x + s, proj.y - s);
+    ctx.lineTo(proj.x + s / 2, proj.y - s);
+
+    ctx.moveTo(proj.x - s, proj.y + s / 2);
+    ctx.lineTo(proj.x - s, proj.y + s);
+    ctx.lineTo(proj.x - s / 2, proj.y + s);
+
+    ctx.moveTo(proj.x + s, proj.y + s / 2);
+    ctx.lineTo(proj.x + s, proj.y + s);
+    ctx.lineTo(proj.x + s / 2, proj.y + s);
+    ctx.stroke();
+
+    // Label
+    ctx.font = `bold ${9 * dpr}px ui-sans-serif, system-ui`;
+    ctx.fillStyle = sat.color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText("🛰️ " + sat.name, proj.x, proj.y + s + 3 * dpr);
+    
+    rendered.push({ id: `satellite_${sat.id}`, x: proj.x, y: proj.y, r: Math.max(r * 2, 6 * dpr) });
+  }
+  return rendered;
+}
+
+function drawNGC(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  frame: FrameContext,
+  rotation: number,
+  refraction: boolean,
+  dpr: number,
+  latRad: number,
+  zoom: number
+): { id: string; x: number; y: number; r: number }[] {
+  const rendered: { id: string; x: number; y: number; r: number }[] = [];
+  for (const n of NGC_OBJECTS) {
+    const tr = transformStar(n.ra, n.dec, frame, latRad);
+    let alt = tr.horizontal.alt;
+    if (refraction && alt < Math.PI / 2) alt = refract(alt);
+    if (alt <= 0) continue;
+
+    const proj = projectStereographic({
+      cx,
+      cy,
+      radius,
+      alt,
+      az: tr.horizontal.az + rotation,
+    });
+
+    const size = Math.max(3 * dpr, Math.min(12 * dpr, (n.size / 30) * 5 * dpr)) * zoom;
+    const x = proj.x;
+    const y = proj.y;
+    const color = NGC_TYPE_COLORS[n.type] || "#ffffff";
+
+    ctx.save();
+
+    switch (n.type) {
+      case "galaxy": {
+        // Tilted ellipse
+        ctx.strokeStyle = color + "aa";
+        ctx.lineWidth = 1 * dpr;
+        ctx.beginPath();
+        ctx.ellipse(x, y, size, size * 0.4, Math.PI / 6, 0, 2 * Math.PI);
+        ctx.stroke();
+        break;
+      }
+      case "nebula":
+      case "cluster+nebula": {
+        // Dashed circle
+        ctx.strokeStyle = color + "cc";
+        ctx.lineWidth = 1 * dpr;
+        ctx.setLineDash([3 * dpr, 3 * dpr]);
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, 2 * Math.PI);
+        ctx.stroke();
+        break;
+      }
+      case "planetary": {
+        // Ring
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.1 * dpr;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, 2 * Math.PI);
+        ctx.stroke();
+        break;
+      }
+      case "open": {
+        // Star pattern
+        ctx.fillStyle = color;
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * 2 * Math.PI;
+          ctx.beginPath();
+          ctx.arc(x + Math.cos(a) * size * 0.6, y + Math.sin(a) * size * 0.6, 0.8 * dpr, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+        break;
+      }
+      case "globular": {
+        // Fuzzy gradient
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+        grad.addColorStop(0, color);
+        grad.addColorStop(1, "rgba(251, 146, 60, 0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, 2 * Math.PI);
+        ctx.fill();
+        break;
+      }
+      default: {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, 2 * dpr, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+
+    // Label
+    ctx.font = `${9 * dpr}px ui-sans-serif, system-ui`;
+    ctx.fillStyle = "rgba(200, 220, 255, 0.65)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${n.catalog}${n.number}`, x + size + 4 * dpr, y);
+    rendered.push({ id: `ngc_${n.number}`, x: proj.x, y: proj.y, r: Math.max(size, 6 * dpr) });
+  }
+  return rendered;
+}
+

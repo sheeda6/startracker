@@ -30,6 +30,7 @@ import {
   Orbit,
   Telescope,
   Zap,
+  Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 import { useStarTracker, type ViewLayers } from "@/lib/store";
@@ -54,11 +55,17 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "ecliptic", label: "Ecliptic", icon: Compass },
   { key: "milkyWay", label: "Milky Way", icon: Cloud },
   { key: "solarSystem", label: "Sun · Moon · Planets", icon: Sun },
+  { key: "orbits", label: "Object orbit tracks", icon: Orbit },
   { key: "messier", label: "Messier objects", icon: Telescope },
+  { key: "ngcObjects", label: "NGC/IC objects", icon: Orbit },
+  { key: "asteroids", label: "Asteroids", icon: Sparkles },
+  { key: "comets", label: "Comets", icon: Sparkles },
+  { key: "satellites", label: "Artificial Satellites", icon: Sparkles },
   { key: "meteorShowers", label: "Meteor radiants", icon: Zap },
   { key: "cardinalDirections", label: "Cardinal directions", icon: Navigation },
   { key: "starLabels", label: "Star labels", icon: Star },
   { key: "refraction", label: "Atmospheric refraction", icon: Waves },
+  { key: "lightPollutionOverlay", label: "Light pollution glow", icon: Lightbulb },
 ];
 
 export function LayersPanel() {

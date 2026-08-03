@@ -14,15 +14,16 @@
  * glass-morphism card.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useStarTracker } from "@/lib/store";
 import { STARS } from "@/data/stars";
 import { buildFrame, transformStar, refract } from "@/lib/astro/engine";
 import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
 import { getActiveShowers, daysToPeak, type MeteorShower } from "@/data/meteorShowers";
-import { Sun, Moon, Star, Eye, Sparkles, Sunrise, Sunset, Zap } from "lucide-react";
+import { Sun, Moon, Star, Eye, Sparkles, Sunrise, Sunset, Zap, ChevronDown, ChevronUp, X } from "lucide-react";
 
 export function SkySummaryPanel() {
+  const [expanded, setExpanded] = useState(false);
   const observer = useStarTracker((s) => s.observer);
   const currentTime = useStarTracker((s) => s.currentTime);
   const layers = useStarTracker((s) => s.layers);
@@ -30,6 +31,8 @@ export function SkySummaryPanel() {
   const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
 
   const data = useMemo(() => {
+    if (!expanded) return null;
+
     const latRad = (observer.latDeg * Math.PI) / 180;
     const frame = buildFrame({
       date: currentTime,
@@ -106,10 +109,42 @@ export function SkySummaryPanel() {
       brightestVisible,
       activeShowers,
     };
-  }, [observer, currentTime, layers.refraction, filters.maxMagnitude]);
+  }, [expanded, observer, currentTime, layers.refraction, filters.maxMagnitude]);
+
+  if (!expanded) {
+    return (
+      <div className="pointer-events-auto absolute right-3 top-3 z-20">
+        <button
+          onClick={() => setExpanded(true)}
+          className="flex items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/85 px-3 py-1.5 text-xs text-slate-200 shadow-lg backdrop-blur-md transition-colors hover:bg-slate-900 hover:text-amber-300"
+          title="Expand Tonight's Sky summary"
+        >
+          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+          <span className="font-medium text-[11px]">Tonight&apos;s Sky</span>
+          <ChevronDown className="h-3 w-3 text-slate-400" />
+        </button>
+      </div>
+    );
+  }
+
+  if (!data) return null;
 
   return (
-    <div className="pointer-events-auto absolute right-3 top-3 w-56 rounded-lg border border-white/10 bg-slate-950/85 p-3 text-xs text-slate-200 shadow-2xl backdrop-blur-md">
+    <div className="pointer-events-auto absolute right-3 top-3 z-20 w-56 rounded-lg border border-white/10 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl backdrop-blur-md max-h-[80vh] overflow-y-auto">
+      {/* Title bar with collapse button */}
+      <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2">
+        <div className="flex items-center gap-1.5 font-medium text-slate-100 text-[11px]">
+          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+          Tonight&apos;s Sky Summary
+        </div>
+        <button
+          onClick={() => setExpanded(false)}
+          className="rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100 transition-colors"
+          title="Collapse panel"
+        >
+          <ChevronUp className="h-4 w-4" />
+        </button>
+      </div>
       {/* Sun status */}
       <div className="flex items-center gap-2 pb-2">
         <Sun className={`h-4 w-4 ${data.sunColor}`} />

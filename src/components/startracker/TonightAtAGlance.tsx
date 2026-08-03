@@ -74,7 +74,6 @@ export function TonightAtAGlance() {
       // Score: altitude + brightness + moon separation
       const score = altDeg * 0.5 + (3 - s.mag) * 15 + (moonSep > 30 ? 10 : 0);
       candidates.push({
-        rank: 0,
         name: s.name || s.bayer || `HIP ${s.hip}`,
         type: "star",
         mag: s.mag,
@@ -95,7 +94,6 @@ export function TonightAtAGlance() {
       const moonSep = sep(p.ra, p.dec, moon.ra, moon.dec);
       const score = altDeg * 0.5 + (3 - p.magnitude) * 10 + (moonSep > 30 ? 10 : 0);
       candidates.push({
-        rank: 0,
         name: p.name,
         type: "planet",
         mag: p.magnitude,
@@ -111,7 +109,6 @@ export function TonightAtAGlance() {
     const moonAltDeg = (moonTr.horizontal.alt * 180) / Math.PI;
     if (moonAltDeg > 15 && sunAltDeg < 0) {
       candidates.push({
-        rank: 0,
         name: "The Moon",
         type: "moon",
         mag: -12,
@@ -132,7 +129,6 @@ export function TonightAtAGlance() {
       const moonSep = sep(m.ra, m.dec, moon.ra, moon.dec);
       const score = altDeg * 0.4 + (8 - m.magnitude) * 5 + (moonSep > 30 ? 10 : 0);
       candidates.push({
-        rank: 0,
         name: `M${m.number} ${m.name}`,
         type: "messier",
         mag: m.magnitude,

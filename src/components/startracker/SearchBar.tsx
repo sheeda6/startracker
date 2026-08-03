@@ -1,21 +1,14 @@
 "use client";
 
-/**
- * SearchBar — compact star search input for the top toolbar.
- *
- * - Leading Search icon + clear (X) button when text is present.
- * - Instant filtering via `setSearch` in the Zustand store.
- * - Live "N matches" count using the same matching logic as the catalog
- *   filter (case-insensitive substring across name, Bayer, HIP, HD,
- *   Flamsteed, and constellation abbreviation).
- * - Optional Popover dropdown of the top 8 matches when focused; clicking a
- *   row selects that star (sets `selectedHip` and opens the details panel).
- */
-
 import { useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, Star as StarIcon, Sparkles, Orbit, Telescope, Rocket, Sun } from "lucide-react";
 import { useStarTracker } from "@/lib/store";
 import { STARS, type Star } from "@/data/stars";
+import { ASTEROIDS } from "@/data/asteroids";
+import { COMETS } from "@/data/comets";
+import { MESSIER } from "@/data/messier";
+import { NGC_OBJECTS } from "@/data/ngc";
+import { getActiveSatellites } from "@/data/satellites";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,53 +18,169 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-/** Display label for a star (preferred name → Bayer → HIP fallback). */
-function starLabel(s: Star): string {
-  return s.name || s.bayer || `HIP ${s.hip}`;
+interface SearchItem {
+  key: string;
+  label: string;
+  subLabel: string;
+  mag: number; // For sorting
+  type: "star" | "planet" | "asteroid" | "comet" | "satellite" | "messier" | "ngc";
+  icon: any;
+  color: string;
+  dispatch: () => void;
 }
 
-/** Secondary label: shows Bayer if name was used, else HIP id, else constellation. */
-function starSubLabel(s: Star): string {
-  if (s.name && s.bayer) return s.bayer;
-  if (s.bayer) return `HIP ${s.hip}`;
-  return s.constellation;
-}
+const PLANETS = [
+  { id: "sun", name: "Sun", mag: -26.7 },
+  { id: "moon", name: "Moon", mag: -12.7 },
+  { id: "mercury", name: "Mercury", mag: -0.5 },
+  { id: "venus", name: "Venus", mag: -4.4 },
+  { id: "mars", name: "Mars", mag: -1.5 },
+  { id: "jupiter", name: "Jupiter", mag: -2.2 },
+  { id: "saturn", name: "Saturn", mag: 0.5 },
+  { id: "uranus", name: "Uranus", mag: 5.5 },
+  { id: "neptune", name: "Neptune", mag: 7.8 },
+];
 
-/** Case-insensitive substring match across all searchable star fields. */
-function matchesQuery(star: Star, q: string): boolean {
-  const needle = q.toLowerCase();
-  if (needle === "") return false;
-  return (
-    star.name.toLowerCase().includes(needle) ||
-    star.bayer.toLowerCase().includes(needle) ||
-    String(star.hip).includes(needle) ||
-    (star.hd > 0 && String(star.hd).includes(needle)) ||
-    (star.flamsteed > 0 && String(star.flamsteed).includes(needle)) ||
-    star.constellation.toLowerCase().includes(needle)
-  );
+function buildSearchIndex(setSelectedHip: (hip: number) => void, setSelectedBody: (body: string) => void): SearchItem[] {
+  const items: SearchItem[] = [];
+
+  // Planets
+  for (const p of PLANETS) {
+    items.push({
+      key: `planet_${p.id}`,
+      label: p.name,
+      subLabel: "Solar System",
+      mag: p.mag,
+      type: "planet",
+      icon: Sun,
+      color: "text-amber-400",
+      dispatch: () => setSelectedBody(`planet_${p.id}`),
+    });
+  }
+
+  // Asteroids
+  for (const a of ASTEROIDS) {
+    items.push({
+      key: `asteroid_${a.name.toLowerCase()}`,
+      label: a.name,
+      subLabel: `Asteroid · ${a.designation}`,
+      mag: a.peakMag,
+      type: "asteroid",
+      icon: Sparkles,
+      color: "text-stone-400",
+      dispatch: () => setSelectedBody(`asteroid_${a.name.toLowerCase()}`),
+    });
+  }
+
+  // Comets
+  for (const c of COMETS) {
+    items.push({
+      key: `comet_${c.id.toLowerCase()}`,
+      label: c.name,
+      subLabel: `Comet · ${c.id}`,
+      mag: c.H || 5, // rough sorting
+      type: "comet",
+      icon: Sparkles,
+      color: "text-teal-300",
+      dispatch: () => setSelectedBody(`comet_${c.id.toLowerCase()}`),
+    });
+  }
+
+  // Satellites
+  for (const s of getActiveSatellites()) {
+    items.push({
+      key: `satellite_${s.id}`,
+      label: s.name,
+      subLabel: `Satellite · NORAD ${s.id}`,
+      mag: -2, // Usually bright / high priority
+      type: "satellite",
+      icon: Rocket,
+      color: "text-sky-300",
+      dispatch: () => setSelectedBody(`satellite_${s.id}`),
+    });
+  }
+
+  // Messier
+  for (const m of MESSIER) {
+    items.push({
+      key: `messier_${m.number}`,
+      label: `M${m.number}${m.name ? ` · ${m.name}` : ""}`,
+      subLabel: `Deep Sky · ${m.type}`,
+      mag: m.magnitude || 8,
+      type: "messier",
+      icon: Telescope,
+      color: "text-indigo-300",
+      dispatch: () => setSelectedBody(`messier_${m.number}`),
+    });
+  }
+
+  // NGC
+  for (const n of NGC_OBJECTS) {
+    items.push({
+      key: `ngc_${n.number}`,
+      label: `NGC ${n.number}${n.name ? ` · ${n.name}` : ""}`,
+      subLabel: `Deep Sky · ${n.type}`,
+      mag: n.magnitude || 10,
+      type: "ngc",
+      icon: Orbit,
+      color: "text-fuchsia-300",
+      dispatch: () => setSelectedBody(`ngc_${n.number}`),
+    });
+  }
+
+  // Stars
+  for (const s of STARS) {
+    const label = s.name || s.bayer || `HIP ${s.hip}`;
+    let subLabel = s.constellation;
+    if (s.name && s.bayer) subLabel = s.bayer;
+    else if (s.bayer) subLabel = `HIP ${s.hip}`;
+
+    items.push({
+      key: `star_${s.hip}`,
+      label,
+      subLabel,
+      mag: s.mag,
+      type: "star",
+      icon: StarIcon,
+      color: "text-amber-200",
+      dispatch: () => setSelectedHip(s.hip),
+    });
+  }
+
+  return items;
 }
 
 export function SearchBar() {
   const search = useStarTracker((s) => s.search);
   const setSearch = useStarTracker((s) => s.setSearch);
   const setSelectedHip = useStarTracker((s) => s.setSelectedHip);
+  const setSelectedBody = useStarTracker((s) => s.setSelectedBody);
   const setView = useStarTracker((s) => s.setView);
   const [focused, setFocused] = useState(false);
 
-  const q = search.trim();
+  const q = search.trim().toLowerCase();
 
-  // All matches (sorted by brightness) — used for the live count.
+  // Re-build index if things change, though mostly static.
+  const searchIndex = useMemo(() => buildSearchIndex(setSelectedHip, setSelectedBody), [setSelectedHip, setSelectedBody]);
+
   const matches = useMemo(() => {
-    if (!q) return [] as Star[];
-    return STARS.filter((s) => matchesQuery(s, q)).sort((a, b) => a.mag - b.mag);
-  }, [q]);
+    if (!q) return [];
+    return searchIndex
+      .filter((item) => {
+        return (
+          item.label.toLowerCase().includes(q) ||
+          item.subLabel.toLowerCase().includes(q) ||
+          item.key.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => a.mag - b.mag);
+  }, [q, searchIndex]);
 
   const topMatches = matches.slice(0, 8);
   const showDropdown = focused && q.length > 0 && topMatches.length > 0;
 
   const handleReset = () => {
     setSearch("");
-    // keep focus on the input for fast re-typing
   };
 
   return (
@@ -79,8 +188,6 @@ export function SearchBar() {
       <Popover
         open={showDropdown}
         onOpenChange={(o) => {
-          // Radix fires this on Escape / outside-click; mirror into `focused`
-          // so the derived `showDropdown` stays in sync.
           if (!o) setFocused(false);
         }}
       >
@@ -96,8 +203,8 @@ export function SearchBar() {
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
-              placeholder="Search by name, Bayer, HIP, HD, Flamsteed…"
-              aria-label="Search stars"
+              placeholder="Search all objects..."
+              aria-label="Search sky"
               spellCheck={false}
               autoComplete="off"
               className="h-8 w-full border-white/10 bg-slate-950/60 pl-8 pr-7 text-xs text-slate-200 placeholder:text-slate-500 focus-visible:border-amber-400/40 focus-visible:ring-amber-400/20"
@@ -108,7 +215,6 @@ export function SearchBar() {
                 variant="ghost"
                 size="icon"
                 aria-label="Clear search"
-                // Prevent input blur so the dropdown state doesn't flicker.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={handleReset}
                 className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 text-slate-400 hover:bg-white/10 hover:text-slate-100"
@@ -122,23 +228,18 @@ export function SearchBar() {
         <PopoverContent
           align="start"
           sideOffset={4}
-          // Keep focus on the input; closing is driven by blur/escape instead.
           onOpenAutoFocus={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => e.preventDefault()}
           onPointerDownOutside={(e) => e.preventDefault()}
           className="w-64 border-white/10 bg-slate-950/95 p-1 text-slate-200 shadow-xl backdrop-blur-md"
         >
-          <div
-            className="max-h-80 overflow-y-auto"
-            style={{ scrollbarWidth: "thin" }}
-          >
-            {topMatches.map((s) => (
+          <div className="max-h-80 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+            {topMatches.map((item) => (
               <SearchResult
-                key={s.hip}
-                star={s}
+                key={item.key}
+                item={item}
                 onSelect={() => {
-                  setSelectedHip(s.hip);
-                  // Zoom in on the star for "go to" effect
+                  item.dispatch();
                   setView({ zoom: Math.min(4, Math.max(2, useStarTracker.getState().view.zoom)) });
                   setFocused(false);
                 }}
@@ -148,11 +249,10 @@ export function SearchBar() {
         </PopoverContent>
       </Popover>
 
-      {/* Live match count */}
       <div className="px-1 text-[11px] text-slate-500">
         {q.length === 0 ? (
           <span className="text-slate-600">
-            <span className="font-mono">{STARS.length}</span> stars in catalog
+            <span className="font-mono">{searchIndex.length}</span> objects
           </span>
         ) : (
           <span>
@@ -172,32 +272,26 @@ export function SearchBar() {
   );
 }
 
-function SearchResult({
-  star,
-  onSelect,
-}: {
-  star: Star;
-  onSelect: () => void;
-}) {
+function SearchResult({ item, onSelect }: { item: SearchItem; onSelect: () => void }) {
+  const Icon = item.icon;
   return (
     <button
       type="button"
-      // Prevent the input from blurring so `onClick` fires reliably.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onSelect}
       className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-white/10 focus:bg-white/10 focus:outline-none"
     >
-      <div className="min-w-0">
-        <div className="truncate text-xs text-slate-100">{starLabel(star)}</div>
-        <div className="truncate text-[10px] text-slate-500">
-          {starSubLabel(star)}
+      <div className="flex items-center gap-2 min-w-0">
+        <Icon className={cn("h-4 w-4 shrink-0", item.color)} />
+        <div className="min-w-0">
+          <div className="truncate text-xs text-slate-100">{item.label}</div>
+          <div className="truncate text-[10px] text-slate-500">{item.subLabel}</div>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <span className="font-mono text-[10px] text-amber-300/80">
-          m{star.mag.toFixed(1)}
+          {item.mag !== undefined ? `m${item.mag.toFixed(1)}` : ""}
         </span>
-        <span className="text-[10px] text-slate-400">{star.constellation}</span>
       </div>
     </button>
   );

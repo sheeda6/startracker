@@ -28,7 +28,7 @@ export function MoonPhasesCalendar() {
     );
     const today = currentTime.getUTCDate();
 
-    const result = [];
+    const result: { date: Date; phase: any; altDeg: number; isPhaseDay: boolean }[] = [];
     for (let i = 0; i < 30; i++) {
       const t = new Date(startMs + i * 24 * 3600 * 1000);
       const phase = moonPhase(t);

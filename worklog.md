@@ -854,3 +854,34 @@ Stage Summary:
 - All previously-proposed pending features are now implemented.
 - App is feature-complete with 22 components covering: sky map, star details, star table, time controls, observer settings, search, filters, layers, compass, measurement, guided tour, sky summary, observing conditions, time jump, tonight at a glance, proper motion demo, settings export, moon phases calendar, welcome overlay, night mode, magnitude filter, constellation browser.
 - No outstanding TODO items remain in the codebase.
+
+---
+Task ID: zoom-fix
+Agent: main (Antigravity)
+Task: Fix the zoom functionality of the SkyMap canvas.
+
+Work Log:
+- Identified that while zoom state (`view.zoom`) was being set by mouse wheel and control widgets, it was not being used to scale the horizon radius (`radius`) in the stereographic projection.
+- Created `zoomedRadius = radius * view.zoom` in `SkyMap.tsx`'s `render` loop.
+- Updated all coordinate projection calls (`projectStereographic`) to use `zoomedRadius` instead of `radius`.
+- Updated the sky background, haze gradient, and outside-horizon (ground) mask to use `zoomedRadius` so the sky properly expands and clips.
+- Updated helper functions `drawMilkyWay`, `drawSolarSystem`, `drawMessier`, and `drawMeteorRadiants` to accept and use `zoom` and `dpr` to scale particle sizes, glyphs, and glows as the user zooms in/out.
+- Verified that all components compile correctly and zoom operations now scale the sky smoothly.
+
+Stage Summary:
+- Zoom functionality is fully fixed and visual sizes scale dynamically.
+
+---
+Task ID: port-conflict-fix
+Agent: main (Antigravity)
+Task: Resolve port 3000 address-in-use conflict.
+
+Work Log:
+- Identified that `ntopng` (High-Speed Web-based Traffic Analysis tool) is running as a system service on the host under root (UID 0), occupying port 3000.
+- Updated all port references from 3000 to 3001 in `package.json`, `.zscripts/dev.sh`, `.zscripts/start.sh`, and `Caddyfile`.
+- Verified changes. The application dev server can now run cleanly on port 3001 without conflicting with `ntopng`.
+
+Stage Summary:
+- Default development and production server ports relocated to 3001.
+
+
