@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { NightModeClass } from "@/components/startracker/NightModeClass";
 import { WelcomeOverlay } from "@/components/startracker/WelcomeOverlay";
+import { Analytics } from "@vercel/analytics/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -63,6 +64,7 @@ export default function RootLayout({
         <WelcomeOverlay />
         {children}
         <Toaster />
+        <Analytics />
       </body>
     </html>
   );
