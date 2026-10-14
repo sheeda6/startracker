@@ -48,6 +48,7 @@ import { DSODetails } from "@/components/startracker/DSODetails";
 import { LightPollutionPanel } from "@/components/startracker/LightPollutionPanel";
 import { WeatherPanel } from "@/components/startracker/WeatherPanel";
 import { VisibilityPanel } from "@/components/startracker/VisibilityPanel";
+import { AboutDialog } from "@/components/startracker/AboutDialog";
 import { useStarTracker } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,7 @@ import {
   ChevronRight,
   Menu,
   Table,
+  Info,
 } from "lucide-react";
 
 export default function Home() {
@@ -120,6 +122,7 @@ export default function Home() {
   const measureMode = useStarTracker((s) => s.measureMode);
   const setMeasureMode = useStarTracker((s) => s.setMeasureMode);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [activeToolPanel, setActiveToolPanel] = useState<string | null>(null);
 
   // Tool panel map
@@ -193,6 +196,9 @@ export default function Home() {
           break;
         case "?":
           setShowShortcuts((v) => !v);
+          break;
+        case "a": case "A":
+          setShowAbout((v) => !v);
           break;
         case "m": case "M":
           setNightMode(!nightMode);
@@ -329,6 +335,9 @@ export default function Home() {
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => openTool("share")} className="justify-start gap-2 h-8 text-xs text-slate-300">
                     <Share2 className="h-3.5 w-3.5 text-slate-300" /> Share & Export
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowAbout(true)} className="justify-start gap-2 h-8 text-xs text-amber-300">
+                    <Info className="h-3.5 w-3.5 text-amber-400" /> About & Data Sources
                   </Button>
                 </div>
 
@@ -510,6 +519,13 @@ export default function Home() {
                 Share / Export
                 <ChevronRight className="ml-auto h-3 w-3 opacity-40" />
               </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-white/10" />
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-slate-500">Documentation</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => setShowAbout(true)}>
+                <Info className="mr-2 h-3.5 w-3.5 text-amber-300" />
+                About & Data Sources
+                <ChevronRight className="ml-auto h-3 w-3 opacity-40" />
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -569,6 +585,16 @@ export default function Home() {
             title="Keyboard shortcuts (?)"
           >
             <Keyboard className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-slate-400 hover:bg-white/10 hover:text-amber-300"
+            onClick={() => setShowAbout(true)}
+            aria-label="About & Data Sources"
+            title="About & Scientific Data Sources (A)"
+          >
+            <Info className="h-4 w-4" />
           </Button>
           </div>
         </div>
@@ -630,6 +656,7 @@ export default function Home() {
                 { keys: ["Esc"], desc: "Deselect + exit measure mode" },
                 { keys: ["D"], desc: "Toggle measure mode" },
                 { keys: ["M"], desc: "Toggle night mode (red)" },
+                { keys: ["A"], desc: "About & Data Sources" },
                 { keys: ["?"], desc: "Toggle this help" },
               ].map(({ keys, desc }) => (
                 <div key={desc} className="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
@@ -701,6 +728,14 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setShowAbout(true)}
+              className="hidden items-center gap-1 text-slate-400 transition-colors hover:text-amber-300 md:flex"
+            >
+              <Info className="h-3 w-3 text-amber-400" />
+              <span className="text-[10px]">Data Sources</span>
+            </button>
+            <span className="hidden text-slate-600 md:inline">·</span>
+            <button
               onClick={() => setShowShortcuts(true)}
               className="hidden items-center gap-1 text-slate-500 transition-colors hover:text-slate-300 md:flex"
             >
@@ -725,6 +760,9 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* About & Scientific Data Sources Modal */}
+      <AboutDialog open={showAbout} onOpenChange={setShowAbout} />
     </div>
   );
 }
@@ -868,10 +906,16 @@ function ResizableLayout({
   const [mobileTableOpen, setMobileTableOpen] = useState(false);
 
   // Auto-open mobile details sheet when a target/star is selected on mobile
+  const prevSelectedRef = useRef<{ hip: number | null; body: string | null }>({ hip: null, body: null });
   useEffect(() => {
-    if (selectedHip !== null || selectedBody !== null) {
-      setMobileDetailsOpen(true);
+    if (
+      (selectedHip !== null || selectedBody !== null) &&
+      (selectedHip !== prevSelectedRef.current.hip || selectedBody !== prevSelectedRef.current.body)
+    ) {
+      const timer = setTimeout(() => setMobileDetailsOpen(true), 0);
+      return () => clearTimeout(timer);
     }
+    prevSelectedRef.current = { hip: selectedHip, body: selectedBody };
   }, [selectedHip, selectedBody]);
 
   return (

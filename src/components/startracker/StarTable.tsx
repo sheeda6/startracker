@@ -12,7 +12,7 @@
  * changes via useMemo.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -24,6 +24,7 @@ import {
   type SortingState,
   type ColumnDef,
   type VisibilityState,
+  type PaginationState,
 } from "@tanstack/react-table";
 import { useStarTracker } from "@/lib/store";
 import { STARS, spectralColor, type Star } from "@/data/stars";
@@ -79,7 +80,16 @@ export function StarTable() {
     ra: false,
     dec: false,
   });
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 12,
+  });
   const [showColMenu, setShowColMenu] = useState(false);
+
+  // Reset pagination to first page only when user explicitly changes search or filters
+  useEffect(() => {
+    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+  }, [search, filters]);
 
   // Throttle: rise/set times only need to recompute when the calendar DATE
   // changes (not every 100ms tick). At ×3600 fast-forward this prevents
@@ -286,14 +296,15 @@ export function StarTable() {
   const table = useReactTable({
     data: filteredRows,
     columns,
-    state: { sorting, columnVisibility },
+    state: { sorting, columnVisibility, pagination },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onPaginationChange: setPagination,
+    autoResetPageIndex: false,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 12 } },
   });
 
   return (
