@@ -49,6 +49,7 @@ import { LightPollutionPanel } from "@/components/startracker/LightPollutionPane
 import { WeatherPanel } from "@/components/startracker/WeatherPanel";
 import { VisibilityPanel } from "@/components/startracker/VisibilityPanel";
 import { AboutDialog } from "@/components/startracker/AboutDialog";
+import { DetailsPanelErrorBoundary } from "@/components/startracker/DetailsPanelErrorBoundary";
 import { useStarTracker } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -78,8 +79,8 @@ import {
   SlidersHorizontal,
   Layers,
   MapPin,
-  PanelRightOpen,
-  PanelRightClose,
+  PanelLeftOpen,
+  PanelLeftClose,
   PanelBottomOpen,
   PanelBottomClose,
   Github,
@@ -98,14 +99,16 @@ import {
   Eye,
   MoreHorizontal,
   ChevronRight,
+  ChevronLeft,
+  X,
   Menu,
   Table,
   Info,
 } from "lucide-react";
 
 export default function Home() {
-  const rightPanelOpen = useStarTracker((s) => s.rightPanelOpen);
-  const setRightPanelOpen = useStarTracker((s) => s.setRightPanelOpen);
+  const leftPanelOpen = useStarTracker((s) => s.leftPanelOpen);
+  const setLeftPanelOpen = useStarTracker((s) => s.setLeftPanelOpen);
   const bottomPanelOpen = useStarTracker((s) => s.bottomPanelOpen);
   const setBottomPanelOpen = useStarTracker((s) => s.setBottomPanelOpen);
   const selectedHip = useStarTracker((s) => s.selectedHip);
@@ -151,7 +154,14 @@ export default function Home() {
     visibility: "Visibility",
     share: "Share / Export",
   };
-  const openTool = (key: string) => setActiveToolPanel(activeToolPanel === key ? null : key);
+  const openTool = (key: string) => {
+    if (activeToolPanel === key && leftPanelOpen) {
+      setActiveToolPanel(null);
+    } else {
+      setActiveToolPanel(key);
+      setLeftPanelOpen(true);
+    }
+  };
 
   // Load shared config from URL hash on mount
   useEffect(() => {
@@ -536,11 +546,11 @@ export default function Home() {
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0 text-slate-400 hover:bg-white/10 hover:text-slate-100"
-            onClick={() => setRightPanelOpen(!rightPanelOpen)}
-            aria-label={rightPanelOpen ? "Hide details panel" : "Show details panel"}
-            title={rightPanelOpen ? "Hide details panel" : "Show details panel"}
+            onClick={() => setLeftPanelOpen(!leftPanelOpen)}
+            aria-label={leftPanelOpen ? "Hide info & tools panel" : "Show info & tools panel"}
+            title={leftPanelOpen ? "Hide info & tools panel" : "Show info & tools panel"}
           >
-            {rightPanelOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            {leftPanelOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
           <Button
             variant="ghost"
@@ -612,7 +622,8 @@ export default function Home() {
           toolPanelLabel={toolPanelLabel}
           toolPanelContent={toolPanelContent}
           setActiveToolPanel={setActiveToolPanel}
-          rightPanelOpen={rightPanelOpen}
+          leftPanelOpen={leftPanelOpen}
+          setLeftPanelOpen={setLeftPanelOpen}
           bottomPanelOpen={bottomPanelOpen}
           selectedHip={selectedHip}
           selectedBody={selectedBody}
@@ -683,32 +694,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Mobile details drawer */}
-      {!rightPanelOpen && (selectedHip || selectedBody) && (
-        <Sheet open={true} onOpenChange={() => setRightPanelOpen(true)}>
-          <SheetTrigger asChild>
-            <Button
-              className="fixed right-3 bottom-3 z-40 h-12 w-12 rounded-full bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/30 hover:bg-amber-300 md:hidden"
-              size="icon"
-              aria-label="Open target details"
-            >
-              <Telescope className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="right" className="w-full border-white/10 bg-slate-950 p-0 sm:w-[400px]">
-            <SheetHeader className="px-4 pt-4">
-              <SheetTitle className="text-slate-100">Target Details</SheetTitle>
-            </SheetHeader>
-            <div className="h-[calc(100vh-80px)] p-2">
-              {selectedBody ? (
-                selectedBody.startsWith("asteroid_") ? <AsteroidDetails /> :
-                selectedBody.startsWith("messier_") || selectedBody.startsWith("ngc_") ? <DSODetails /> :
-                <SolarBodyDetails />
-              ) : <StarDetails />}
-            </div>
-          </SheetContent>
-        </Sheet>
-      )}
 
       {/* ─── Footer (sticky) ─────────────────────────────────── */}
       <footer className="shrink-0 border-t border-white/10 bg-slate-950/95 backdrop-blur">
@@ -859,7 +844,8 @@ interface ResizableLayoutProps {
   toolPanelLabel: Record<string, string>;
   toolPanelContent: Record<string, React.ReactNode>;
   setActiveToolPanel: (v: string | null) => void;
-  rightPanelOpen: boolean;
+  leftPanelOpen: boolean;
+  setLeftPanelOpen: (b: boolean) => void;
   bottomPanelOpen: boolean;
   selectedHip: number | null;
   selectedBody: string | null;
@@ -871,93 +857,62 @@ function ResizableLayout({
   toolPanelLabel,
   toolPanelContent,
   setActiveToolPanel,
-  rightPanelOpen,
+  leftPanelOpen,
+  setLeftPanelOpen,
   bottomPanelOpen,
   selectedHip,
   selectedBody,
   observer,
 }: ResizableLayoutProps) {
-  // px heights / widths — stored in state so that layout re-renders correctly
-  const [toolH, setToolH] = useState(220);
   const [tableH, setTableH] = useState(220);
-  const [detailsW, setDetailsW] = useState(320);
+  const [leftPanelW, setLeftPanelW] = useState(380);
+  const [leftPanelTab, setLeftPanelTab] = useState<"details" | "tool">("details");
 
-  // Refs to track current sizes during drag without stale closures
-  const toolHRef = useRef(toolH);
   const tableHRef = useRef(tableH);
-  const detailsWRef = useRef(detailsW);
-  useEffect(() => { toolHRef.current = toolH; }, [toolH]);
+  const leftPanelWRef = useRef(leftPanelW);
   useEffect(() => { tableHRef.current = tableH; }, [tableH]);
-  useEffect(() => { detailsWRef.current = detailsW; }, [detailsW]);
-
-  const onToolDrag = useCallback((delta: number) => {
-    setToolH((h) => Math.min(500, Math.max(80, h + delta)));
-  }, []);
+  useEffect(() => { leftPanelWRef.current = leftPanelW; }, [leftPanelW]);
 
   const onTableDrag = useCallback((delta: number) => {
     setTableH((h) => Math.min(500, Math.max(80, h - delta)));
   }, []);
 
-  const onDetailsDrag = useCallback((delta: number) => {
-    setDetailsW((w) => Math.min(600, Math.max(180, w - delta)));
+  const onLeftDrag = useCallback((delta: number) => {
+    setLeftPanelW((w) => Math.min(650, Math.max(280, w + delta)));
   }, []);
 
-  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [mobileTableOpen, setMobileTableOpen] = useState(false);
 
-  // Auto-open mobile details sheet when a target/star is selected on mobile
+  // Automatically switch tab and slide open left panel when a tool is activated
+  useEffect(() => {
+    if (activeToolPanel) {
+      setLeftPanelTab("tool");
+      setLeftPanelOpen(true);
+    }
+  }, [activeToolPanel, setLeftPanelOpen]);
+
+  // Automatically switch tab and slide open left panel when an object is selected
   const prevSelectedRef = useRef<{ hip: number | null; body: string | null }>({ hip: null, body: null });
   useEffect(() => {
     if (
       (selectedHip !== null || selectedBody !== null) &&
       (selectedHip !== prevSelectedRef.current.hip || selectedBody !== prevSelectedRef.current.body)
     ) {
-      const timer = setTimeout(() => setMobileDetailsOpen(true), 0);
-      return () => clearTimeout(timer);
+      setLeftPanelTab("details");
+      setLeftPanelOpen(true);
     }
     prevSelectedRef.current = { hip: selectedHip, body: selectedBody };
-  }, [selectedHip, selectedBody]);
+  }, [selectedHip, selectedBody, setLeftPanelOpen]);
 
   return (
     <div className="flex flex-1 flex-col min-h-0 overflow-hidden p-1 gap-0">
-
-      {/* ── Tool panel (resizable height) ── */}
-      {activeToolPanel && (
-        <>
-          <div
-            className="shrink-0 flex flex-col border border-white/10 rounded-lg bg-slate-950/95 backdrop-blur-md mb-0"
-            style={{ height: toolH, minHeight: 80 }}
-          >
-            {/* Title bar */}
-            <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-4 py-2">
-              <span className="text-xs font-medium text-slate-300">
-                {toolPanelLabel[activeToolPanel]}
-              </span>
-              <button
-                className="h-6 w-6 flex items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-white/10 transition-colors text-sm"
-                onClick={() => setActiveToolPanel(null)}
-                aria-label="Close tool panel"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {toolPanelContent[activeToolPanel]}
-            </div>
-          </div>
-          <DragHandle direction="vertical" onDrag={onToolDrag} />
-        </>
-      )}
-
       {/* ── Sky map row + star table (vertical) ── */}
       <div className="flex flex-1 flex-col min-h-0 gap-0">
-
-        {/* ── Sky map + details panel (horizontal) ── */}
-        <div className="flex flex-1 min-h-0 gap-0">
-
-          {/* Sky map */}
+        {/* ── Sky map row with overlayed slidable left panel ── */}
+        <div className="relative flex flex-1 min-h-0 gap-0">
+          {/* Sky map section (takes 100% width and height) */}
           <section
-            className="relative flex-1 min-w-0 rounded-lg border border-white/10 bg-slate-950 m-0.5"
+            className="relative flex-1 min-w-0 rounded-lg border border-white/10 bg-slate-950 m-0.5 overflow-hidden"
             aria-label="Sky map"
           >
             <SkyMap />
@@ -965,6 +920,137 @@ function ResizableLayout({
             <SkyTour />
             <MeasureOverlay />
             <CompassControl />
+
+            {/* Left Slidable Overlay Panel (Target Details & Observatory Tools) */}
+            <div
+              className={cn(
+                "absolute inset-y-0 left-0 z-30 flex flex-col border-r border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur-xl transition-transform duration-300 ease-in-out",
+                leftPanelOpen ? "translate-x-0 pointer-events-auto" : "-translate-x-full pointer-events-none"
+              )}
+              style={{ width: leftPanelW, maxWidth: "min(650px, calc(100% - 1rem))" }}
+              aria-label="Target Details & Observatory Tools"
+            >
+              {/* Drag handle on right edge for horizontal resizing */}
+              <div className="absolute top-0 bottom-0 -right-1 z-40 flex items-stretch">
+                <DragHandle direction="horizontal" onDrag={onLeftDrag} />
+              </div>
+
+              {/* Panel Header */}
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-white/[0.02] px-3 py-2">
+                <div className="flex items-center gap-1 min-w-0">
+                  {activeToolPanel ? (
+                    <div className="flex items-center gap-1 p-0.5 rounded-lg bg-black/40 border border-white/10">
+                      <button
+                        onClick={() => setLeftPanelTab("details")}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                          leftPanelTab === "details"
+                            ? "bg-amber-400/20 text-amber-300 font-semibold"
+                            : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                        )}
+                      >
+                        <Telescope className="h-3.5 w-3.5" />
+                        <span>Target</span>
+                        {(selectedHip || selectedBody) && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        )}
+                      </button>
+                      <div className="flex items-center">
+                        <button
+                          onClick={() => setLeftPanelTab("tool")}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                            leftPanelTab === "tool"
+                              ? "bg-sky-400/20 text-sky-300 font-semibold"
+                              : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                          )}
+                        >
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                          <span className="truncate max-w-[130px]">{toolPanelLabel[activeToolPanel]}</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveToolPanel(null);
+                            setLeftPanelTab("details");
+                          }}
+                          className="ml-0.5 p-1 text-slate-500 hover:text-slate-200 rounded transition-colors"
+                          title="Close tool view"
+                          aria-label="Close tool view"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+                      <Telescope className="h-4 w-4 text-amber-400" />
+                      <span>Target Details</span>
+                      {(selectedHip || selectedBody) && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-amber-400/30 text-amber-300 bg-amber-400/10">
+                          Active
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0 ml-2">
+                  <button
+                    onClick={() => setLeftPanelOpen(false)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-white/10 hover:text-slate-200 transition-colors"
+                    title="Slide panel closed"
+                    aria-label="Slide panel closed"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Panel Content (Scrollable) */}
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <DetailsPanelErrorBoundary>
+                  {leftPanelTab === "tool" && activeToolPanel ? (
+                    <div className="h-full">
+                      {toolPanelContent[activeToolPanel]}
+                    </div>
+                  ) : selectedBody ? (
+                    selectedBody.startsWith("asteroid_") ? <AsteroidDetails /> :
+                    selectedBody.startsWith("comet_") ? <CometDetails /> :
+                    selectedBody.startsWith("satellite_") ? <SatelliteDetails /> :
+                    selectedBody.startsWith("messier_") || selectedBody.startsWith("ngc_") ? <DSODetails /> :
+                    <SolarBodyDetails />
+                  ) : selectedHip ? (
+                    <StarDetails />
+                  ) : (
+                    <EmptyDetails />
+                  )}
+                </DetailsPanelErrorBoundary>
+              </div>
+            </div>
+
+            {/* Floating button on left of map to slide open when hidden */}
+            {!leftPanelOpen && (
+              <button
+                onClick={() => setLeftPanelOpen(true)}
+                className="absolute left-2.5 top-3 z-20 flex items-center gap-2 rounded-lg border border-white/15 bg-slate-950/85 px-3 py-2 text-xs text-slate-200 shadow-2xl backdrop-blur-md transition-all hover:bg-slate-900 hover:border-amber-400/40 hover:text-white"
+                title="Open Info & Tools panel"
+                aria-label="Open Info & Tools panel"
+              >
+                <PanelLeftOpen className="h-4 w-4 text-amber-400" />
+                <span className="font-medium text-xs">
+                  {selectedHip || selectedBody
+                    ? "Target Info"
+                    : activeToolPanel
+                    ? toolPanelLabel[activeToolPanel]
+                    : "Info & Tools"}
+                </span>
+                {(selectedHip || selectedBody) && (
+                  <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                )}
+              </button>
+            )}
+
             {/* Observer badge */}
             <div className="pointer-events-none absolute left-3 bottom-3 rounded-md border border-white/10 bg-slate-950/80 px-2.5 py-1.5 text-[10px] text-slate-300 backdrop-blur">
               <div className="flex items-center gap-1.5">
@@ -982,17 +1068,17 @@ function ResizableLayout({
             </div>
 
             {/* Mobile Floating Action Bar (< md) */}
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 md:hidden flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/90 px-3 py-1.5 shadow-2xl backdrop-blur-md">
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 md:hidden flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/90 px-3 py-1.5 shadow-2xl backdrop-blur-md">
               <Button
                 variant="ghost"
                 size="sm"
                 className={cn(
                   "h-8 gap-1.5 px-3 rounded-full text-xs font-medium transition-colors",
-                  (selectedHip || selectedBody)
+                  (selectedHip || selectedBody || leftPanelOpen)
                     ? "bg-amber-400/20 text-amber-300 hover:bg-amber-400/30"
                     : "text-slate-300 hover:bg-white/10 hover:text-white"
                 )}
-                onClick={() => setMobileDetailsOpen(true)}
+                onClick={() => setLeftPanelOpen(!leftPanelOpen)}
               >
                 <Telescope className="h-3.5 w-3.5" />
                 <span>Details</span>
@@ -1022,30 +1108,6 @@ function ResizableLayout({
               </div>
             </div>
           </section>
-
-          {/* Horizontal resize + details panel (desktop >= md) */}
-          {rightPanelOpen && (
-            <>
-              <DragHandle direction="horizontal" onDrag={onDetailsDrag} />
-              <aside
-                className="shrink-0 hidden md:flex flex-col rounded-lg border border-white/10 bg-slate-900/50 m-0.5 ml-0 overflow-auto"
-                style={{ width: detailsW, minWidth: 180 }}
-                aria-label="Target details"
-              >
-                {selectedBody ? (
-                  selectedBody.startsWith("asteroid_") ? <AsteroidDetails /> :
-                  selectedBody.startsWith("comet_") ? <CometDetails /> :
-                  selectedBody.startsWith("satellite_") ? <SatelliteDetails /> :
-                  selectedBody.startsWith("messier_") || selectedBody.startsWith("ngc_") ? <DSODetails /> :
-                  <SolarBodyDetails />
-                ) : selectedHip ? (
-                  <StarDetails />
-                ) : (
-                  <EmptyDetails />
-                )}
-              </aside>
-            </>
-          )}
         </div>
 
         {/* Star table (desktop >= md) */}
@@ -1062,30 +1124,6 @@ function ResizableLayout({
           </div>
         )}
       </div>
-
-      {/* Mobile Target Details Bottom Sheet (< md) */}
-      <Sheet open={mobileDetailsOpen} onOpenChange={setMobileDetailsOpen}>
-        <SheetContent side="bottom" className="h-[75vh] max-h-[600px] border-t border-white/10 bg-slate-950/95 text-slate-100 p-4 rounded-t-2xl overflow-y-auto">
-          <SheetHeader className="p-0 mb-3 border-b border-white/10 pb-2">
-            <SheetTitle className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-              <Telescope className="h-4 w-4 text-amber-400" /> Target Information
-            </SheetTitle>
-          </SheetHeader>
-          <div>
-            {selectedBody ? (
-              selectedBody.startsWith("asteroid_") ? <AsteroidDetails /> :
-              selectedBody.startsWith("comet_") ? <CometDetails /> :
-              selectedBody.startsWith("satellite_") ? <SatelliteDetails /> :
-              selectedBody.startsWith("messier_") || selectedBody.startsWith("ngc_") ? <DSODetails /> :
-              <SolarBodyDetails />
-            ) : selectedHip ? (
-              <StarDetails />
-            ) : (
-              <EmptyDetails />
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
 
       {/* Mobile Star Catalog Bottom Sheet (< md) */}
       <Sheet open={mobileTableOpen} onOpenChange={setMobileTableOpen}>

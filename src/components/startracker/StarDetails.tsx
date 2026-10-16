@@ -42,7 +42,7 @@ export function StarDetails() {
   const observer = useStarTracker((s) => s.observer);
   const currentTime = useStarTracker((s) => s.currentTime);
   const layers = useStarTracker((s) => s.layers);
-  const open = useStarTracker((s) => s.rightPanelOpen);
+  const open = useStarTracker((s) => s.leftPanelOpen ?? s.rightPanelOpen);
 
   const star: Star | undefined = selectedHip != null ? STARS_BY_HIP.get(selectedHip) : undefined;
 

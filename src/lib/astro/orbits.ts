@@ -17,6 +17,8 @@ import { STARS_BY_HIP } from "@/data/stars";
 export interface OrbitPoint {
   ra: number;  // radians
   dec: number; // radians
+  alt?: number; // radians (topocentric observed altitude for near-Earth satellites)
+  az?: number;  // radians (topocentric observed azimuth for near-Earth satellites)
 }
 
 export interface OrbitTrack {
@@ -65,24 +67,27 @@ export function getOrbitTracks(
   if (!selectedBodyId) return [];
   const targetId = selectedBodyId.toLowerCase();
 
-  // 1. Planets
-  const planetColors: Record<string, string> = {
-    Mercury: "#b5b5b5",
-    Venus: "#f5e6c8",
-    Mars: "#e07b4a",
-    Jupiter: "#e8c89a",
-    Saturn: "#dcc39a",
+  // 1. Planets — orbital periods (days) for full-path coverage
+  // Using sidereal periods so we sample the complete ecliptic arc.
+  const planetConfig: Record<string, { color: string; periodDays: number }> = {
+    Mercury: { color: "#b5b5b5", periodDays: 88 },
+    Venus:   { color: "#f5e6c8", periodDays: 225 },
+    Mars:    { color: "#e07b4a", periodDays: 687 },
+    Jupiter: { color: "#e8c89a", periodDays: 1461 },  // ~4 years — full path still visible
+    Saturn:  { color: "#dcc39a", periodDays: 1825 },  // ~5 years — sample enough of the ring
   };
 
-  const planetNames = ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"];
-  for (const pName of planetNames) {
+  for (const [pName, cfg] of Object.entries(planetConfig)) {
     const id = `planet_${pName.toLowerCase()}`;
     if (targetId === id) {
       const points: OrbitPoint[] = [];
-      const stepHours = 24; // 1 day steps
-      const numSteps = 16;
-      for (let i = -numSteps; i <= numSteps; i++) {
-        const t = new Date(baseTime + i * stepHours * 3600 * 1000);
+      // 90 steps spread over the full orbital period → smooth closed curve
+      const numSteps = 90;
+      const stepMs = (cfg.periodDays * 24 * 3600 * 1000) / numSteps;
+      // Start half a period before current time so the current position sits near the middle
+      const startMs = baseTime - (cfg.periodDays / 2) * 24 * 3600 * 1000;
+      for (let i = 0; i <= numSteps; i++) {
+        const t = new Date(startMs + i * stepMs);
         const planets = planetPositions(t);
         const target = planets.find((p) => p.name === pName);
         if (target) {
@@ -93,13 +98,14 @@ export function getOrbitTracks(
         tracks.push({
           id,
           name: `${pName} Orbit`,
-          color: planetColors[pName] || "#38bdf8",
+          color: cfg.color,
           points,
         });
       }
       return tracks;
     }
   }
+
 
   // 2. Moon
   if (targetId === "moon") {
@@ -193,16 +199,25 @@ export function getOrbitTracks(
 
   // 6. Satellites
   if (targetId.startsWith("satellite_")) {
+    const targetNorm = targetId.toLowerCase();
     const satSample = computeSatellitePositions(date, latDeg, lonDeg, elevationM);
     for (const sat of satSample) {
       const id = `satellite_${sat.id.toLowerCase()}`;
-      if (targetId === id) {
+      if (targetNorm === id) {
         const points: OrbitPoint[] = [];
-        for (let i = -45; i <= 45; i += 3) {
+        // Orbit period is ~90 minutes. Sample from -45 to +45 minutes in 1-minute increments:
+        for (let i = -45; i <= 45; i += 1) {
           const t = new Date(baseTime + i * 60 * 1000);
           const satList = computeSatellitePositions(t, latDeg, lonDeg, elevationM);
-          const found = satList.find((item) => item.id === sat.id);
-          if (found) points.push({ ra: found.ra, dec: found.dec });
+          const found = satList.find((item) => item.id.toLowerCase() === sat.id.toLowerCase());
+          if (found) {
+            points.push({
+              ra: found.ra,
+              dec: found.dec,
+              alt: (found.altDeg * Math.PI) / 180,
+              az: (found.azDeg * Math.PI) / 180,
+            });
+          }
         }
         if (points.length > 1) {
           tracks.push({

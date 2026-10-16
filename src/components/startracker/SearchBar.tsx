@@ -8,7 +8,8 @@ import { ASTEROIDS } from "@/data/asteroids";
 import { COMETS } from "@/data/comets";
 import { MESSIER } from "@/data/messier";
 import { NGC_OBJECTS } from "@/data/ngc";
-import { getActiveSatellites } from "@/data/satellites";
+import { getActiveSatellites, subscribeSatellites } from "@/data/satellites";
+import { useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,11 +158,21 @@ export function SearchBar() {
   const setSelectedBody = useStarTracker((s) => s.setSelectedBody);
   const setView = useStarTracker((s) => s.setView);
   const [focused, setFocused] = useState(false);
+  const [satVersion, setSatVersion] = useState(0);
+
+  useEffect(() => {
+    return subscribeSatellites(() => {
+      setSatVersion((v) => v + 1);
+    });
+  }, []);
 
   const q = search.trim().toLowerCase();
 
-  // Re-build index if things change, though mostly static.
-  const searchIndex = useMemo(() => buildSearchIndex(setSelectedHip, setSelectedBody), [setSelectedHip, setSelectedBody]);
+  // Re-build index if things change, including live satellites
+  const searchIndex = useMemo(
+    () => buildSearchIndex(setSelectedHip, setSelectedBody),
+    [setSelectedHip, setSelectedBody, satVersion]
+  );
 
   const matches = useMemo(() => {
     if (!q) return [];

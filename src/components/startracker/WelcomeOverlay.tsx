@@ -8,7 +8,7 @@
  * Help (?) button + a "Show welcome" option, or a dedicated button.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Telescope,
@@ -29,15 +29,19 @@ import {
 const STORAGE_KEY = "startracker-welcome-seen";
 
 export function WelcomeOverlay() {
-  // Check localStorage once on mount; use a ref to avoid calling setState in effect.
-  const [show, setShow] = useState(() => {
-    if (typeof window === "undefined") return false;
+  // Always start as `false` on both SSR and first client render (avoids hydration mismatch).
+  // After mount, check localStorage and show if this is a first visit.
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
     try {
-      return !localStorage.getItem(STORAGE_KEY);
+      if (!localStorage.getItem(STORAGE_KEY)) {
+        setShow(true);
+      }
     } catch {
-      return false;
+      // localStorage unavailable — leave hidden
     }
-  });
+  }, []);
 
   const dismiss = () => {
     setShow(false);

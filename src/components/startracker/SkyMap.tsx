@@ -43,7 +43,7 @@ import { equatorialToHorizontal } from "@/lib/astro/coordinates";
 import { formatHMS, formatDMS, formatDeg } from "@/lib/astro/time";
 import { sunPosition, moonPosition, planetPositions, moonPhase } from "@/lib/astro/solarSystem";
 import { computeAsteroidPositions } from "@/data/asteroids";
-import { fetchLiveTLEs, computeSatellitePositions } from "@/data/satellites";
+import { fetchLiveTLEs, computeSatellitePositions, subscribeSatellites } from "@/data/satellites";
 import { computeCometPositions } from "@/data/comets";
 import { NGC_OBJECTS, NGC_TYPE_COLORS } from "@/data/ngc";
 import { useLightPollution } from "@/hooks/useLightPollution";
@@ -104,8 +104,12 @@ export function SkyMap() {
     [currentTime, observer.latDeg, observer.lonDeg, observer.elevationM]
   );
 
+  const [, setSatVersion] = useState(0);
   useEffect(() => {
     fetchLiveTLEs();
+    return subscribeSatellites(() => {
+      setSatVersion((v) => v + 1);
+    });
   }, []);
 
   // Tick the clock in realtime modes
@@ -462,7 +466,7 @@ export function SkyMap() {
 
     // 9g. Satellites
     const renderedSatellites = layers.satellites
-      ? drawSatellites(ctx, cx, cy, zoomedRadius, view.rotation, layers.refraction, dpr, currentTime, observer.latDeg, observer.lonDeg, observer.elevationM, view.zoom)
+      ? drawSatellites(ctx, cx, cy, zoomedRadius, view.rotation, layers.refraction, dpr, currentTime, observer.latDeg, observer.lonDeg, observer.elevationM, view.zoom, selectedBody)
       : [];
 
     renderedBodiesRef.current = [...renderedBodies, ...renderedMessier, ...renderedNGC, ...renderedAsteroids, ...renderedComets, ...renderedSatellites];
@@ -485,7 +489,7 @@ export function SkyMap() {
     }
     // 10b. Hovered body ring
     if (hoveredBody != null) {
-      const rb = renderedBodies.find((b) => b.id === hoveredBody);
+      const rb = renderedBodiesRef.current.find((b) => b.id === hoveredBody);
       if (rb) {
         ctx.strokeStyle = "rgba(186, 230, 253, 0.9)";
         ctx.lineWidth = 1.2 * dpr;
@@ -523,7 +527,7 @@ export function SkyMap() {
     }
     // 11a. Selected body ring
     if (selectedBody != null) {
-      const rb = renderedBodies.find((b) => b.id === selectedBody);
+      const rb = renderedBodiesRef.current.find((b) => b.id === selectedBody);
       if (rb) {
         ctx.strokeStyle = "#fbbf24";
         ctx.lineWidth = 1.6 * dpr;
@@ -636,7 +640,7 @@ export function SkyMap() {
     ctx.stroke();
 
     renderedRef.current = renderedStars;
-  }, [frame, layers, view, filters, selectedHip, hoveredHip, selectedBody, hoveredBody, lp, observer.latDeg, currentTime, measureMode, measureStart, measureEnd, properMotionYear]);
+  }, [frame, layers, view, filters, selectedHip, hoveredHip, selectedBody, hoveredBody, lp, observer.latDeg, observer.lonDeg, observer.elevationM, currentTime, measureMode, measureStart, measureEnd, properMotionYear]);
 
   // Sync the latest render closure into the ref (inside an effect, not during render).
   useEffect(() => {
@@ -1253,15 +1257,30 @@ function drawOrbitTracks(
     ctx.strokeStyle = track.color + "a0";
     ctx.lineWidth = 1.2 * dpr;
     ctx.setLineDash([3 * dpr, 3 * dpr]);
+
+    // Clip to the sky circle so below-horizon segments don't draw outside the map
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + 2 * dpr, 0, 2 * Math.PI);
+    ctx.clip();
+
     ctx.beginPath();
     let started = false;
 
     for (const pt of track.points) {
-      const tr = transformStar(pt.ra, pt.dec, frame, latRad);
-      let alt = tr.horizontal.alt;
-      const az = tr.horizontal.az;
+      let alt: number;
+      let az: number;
+      if (pt.alt !== undefined && pt.az !== undefined) {
+        alt = pt.alt;
+        az = pt.az;
+      } else {
+        const tr = transformStar(pt.ra, pt.dec, frame, latRad);
+        alt = tr.horizontal.alt;
+        az = tr.horizontal.az;
+      }
       if (refraction && alt < Math.PI / 2) alt = refract(alt);
-      if (alt < -0.02) {
+      // Skip points very far below the horizon — they project to extreme coordinates
+      // that can cause rendering glitches (nadir and beyond → r → ∞)
+      if (alt < -Math.PI / 2 + 0.05) {
         started = false;
         continue;
       }
@@ -2017,64 +2036,100 @@ function drawSatellites(
   latDeg: number,
   lonDeg: number,
   elevationM: number,
-  zoom: number
+  zoom: number,
+  selectedBody: string | null
 ): { id: string; x: number; y: number; r: number }[] {
   const rendered: { id: string; x: number; y: number; r: number }[] = [];
   const satellites = computeSatellitePositions(date, latDeg, lonDeg, elevationM);
+
   for (const sat of satellites) {
     let alt = (sat.altDeg * Math.PI) / 180;
     if (refraction && alt < Math.PI / 2) alt = refract(alt);
-    if (alt <= 0) continue;
+
+    const isSelected = selectedBody === `satellite_${sat.id}` || selectedBody === `satellite_${sat.id.toLowerCase()}`;
+
+    // If below horizon and not selected, skip
+    if (alt <= 0 && !isSelected) continue;
 
     const az = (sat.azDeg * Math.PI) / 180;
     const proj = projectStereographic({ cx, cy, radius, alt, az: az + rotation });
-    const r = 2.5 * dpr * Math.sqrt(zoom);
+    const r = (isSelected ? 3.5 : 2.5) * dpr * Math.sqrt(zoom);
 
-    // Draw satellite as a fast-moving glowing dot
+    // Is it a major well-known satellite?
+    const isMajor = sat.name.includes("ISS") || sat.name.includes("CSS") || sat.name.includes("TIAN") ||
+                    sat.name.includes("HST") || sat.name.includes("TERRA") || sat.name.includes("AQUA") ||
+                    sat.name.includes("ENVISAT") || sat.name.includes("XRISM");
+
+    // Check if below horizon (selected only)
+    if (alt <= 0 && isSelected) {
+      // Draw ghosted indicator
+      ctx.save();
+      ctx.strokeStyle = sat.color + "99";
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.setLineDash([3 * dpr, 3 * dpr]);
+      ctx.beginPath();
+      ctx.arc(proj.x, proj.y, r * 2, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      ctx.font = `italic ${9 * dpr}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = sat.color + "cc";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(`🛰️ ${sat.name} (Alt ${sat.altDeg.toFixed(0)}°)`, proj.x, proj.y + r * 2 + 2 * dpr);
+      ctx.restore();
+
+      rendered.push({ id: `satellite_${sat.id}`, x: proj.x, y: proj.y, r: Math.max(r * 2, 8 * dpr) });
+      continue;
+    }
+
+    // Draw visible satellite as a glowing dot
     ctx.fillStyle = sat.color;
     ctx.beginPath();
     ctx.arc(proj.x, proj.y, r, 0, 2 * Math.PI);
     ctx.fill();
 
     const halo = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, r * 3);
-    halo.addColorStop(0, sat.color + "80");
+    halo.addColorStop(0, sat.color + (isSelected ? "bb" : "80"));
     halo.addColorStop(1, sat.color + "00");
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(proj.x, proj.y, r * 3, 0, 2 * Math.PI);
     ctx.fill();
 
-    // Draw crosshair-like brackets
-    ctx.strokeStyle = sat.color + "a0";
-    ctx.lineWidth = 1 * dpr;
-    const s = r * 2;
-    ctx.beginPath();
-    ctx.moveTo(proj.x - s, proj.y - s / 2);
-    ctx.lineTo(proj.x - s, proj.y - s);
-    ctx.lineTo(proj.x - s / 2, proj.y - s);
-    
-    ctx.moveTo(proj.x + s, proj.y - s / 2);
-    ctx.lineTo(proj.x + s, proj.y - s);
-    ctx.lineTo(proj.x + s / 2, proj.y - s);
+    // Crosshair-like brackets for major or selected or zoomed-in satellites
+    if (isMajor || isSelected || zoom > 1.3) {
+      ctx.strokeStyle = sat.color + (isSelected ? "ff" : "a0");
+      ctx.lineWidth = (isSelected ? 1.5 : 1) * dpr;
+      const s = r * 2;
+      ctx.beginPath();
+      ctx.moveTo(proj.x - s, proj.y - s / 2);
+      ctx.lineTo(proj.x - s, proj.y - s);
+      ctx.lineTo(proj.x - s / 2, proj.y - s);
 
-    ctx.moveTo(proj.x - s, proj.y + s / 2);
-    ctx.lineTo(proj.x - s, proj.y + s);
-    ctx.lineTo(proj.x - s / 2, proj.y + s);
+      ctx.moveTo(proj.x + s, proj.y - s / 2);
+      ctx.lineTo(proj.x + s, proj.y - s);
+      ctx.lineTo(proj.x + s / 2, proj.y - s);
 
-    ctx.moveTo(proj.x + s, proj.y + s / 2);
-    ctx.lineTo(proj.x + s, proj.y + s);
-    ctx.lineTo(proj.x + s / 2, proj.y + s);
-    ctx.stroke();
+      ctx.moveTo(proj.x - s, proj.y + s / 2);
+      ctx.lineTo(proj.x - s, proj.y + s);
+      ctx.lineTo(proj.x - s / 2, proj.y + s);
 
-    // Label
-    ctx.font = `bold ${9 * dpr}px ui-sans-serif, system-ui`;
-    ctx.fillStyle = sat.color;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText("🛰️ " + sat.name, proj.x, proj.y + s + 3 * dpr);
-    
-    rendered.push({ id: `satellite_${sat.id}`, x: proj.x, y: proj.y, r: Math.max(r * 2, 6 * dpr) });
+      ctx.moveTo(proj.x + s, proj.y + s / 2);
+      ctx.lineTo(proj.x + s, proj.y + s);
+      ctx.lineTo(proj.x + s / 2, proj.y + s);
+      ctx.stroke();
+
+      // Label
+      ctx.font = `bold ${9 * dpr}px ui-sans-serif, system-ui`;
+      ctx.fillStyle = sat.color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText("🛰️ " + sat.name, proj.x, proj.y + s + 3 * dpr);
+    }
+
+    rendered.push({ id: `satellite_${sat.id}`, x: proj.x, y: proj.y, r: Math.max(r * 2, 8 * dpr) });
   }
+
   return rendered;
 }
 

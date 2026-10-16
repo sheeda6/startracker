@@ -117,9 +117,11 @@ interface StarTrackerState {
   setProperMotionYear: (y: number) => void;
 
   // UI
+  leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   bottomPanelOpen: boolean;
   settingsOpen: boolean;
+  setLeftPanelOpen: (b: boolean) => void;
   setRightPanelOpen: (b: boolean) => void;
   setBottomPanelOpen: (b: boolean) => void;
   setSettingsOpen: (b: boolean) => void;
@@ -191,11 +193,11 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
 
   selectedHip: null,
   hoveredHip: null,
-  setSelectedHip: (h) => set({ selectedHip: h, rightPanelOpen: h != null, selectedBody: null }),
+  setSelectedHip: (h) => set({ selectedHip: h, leftPanelOpen: h != null, rightPanelOpen: h != null, selectedBody: null }),
   setHoveredHip: (h) => set({ hoveredHip: h }),
 
   selectedBody: null,
-  setSelectedBody: (b) => set({ selectedBody: b, rightPanelOpen: b != null, selectedHip: null }),
+  setSelectedBody: (b) => set({ selectedBody: b, leftPanelOpen: b != null, rightPanelOpen: b != null, selectedHip: null }),
 
   view: { zoom: 1, rotation: 0 },
   layers: {
@@ -236,10 +238,12 @@ export const useStarTracker = create<StarTrackerState>((set, get) => ({
   properMotionYear: 0,
   setProperMotionYear: (y) => set({ properMotionYear: y }),
 
-  rightPanelOpen: true,
+  leftPanelOpen: false,
+  rightPanelOpen: false,
   bottomPanelOpen: true,
   settingsOpen: false,
-  setRightPanelOpen: (b) => set({ rightPanelOpen: b }),
+  setLeftPanelOpen: (b) => set({ leftPanelOpen: b, rightPanelOpen: b }),
+  setRightPanelOpen: (b) => set({ leftPanelOpen: b, rightPanelOpen: b }),
   setBottomPanelOpen: (b) => set({ bottomPanelOpen: b }),
   setSettingsOpen: (b) => set({ settingsOpen: b }),
 }));

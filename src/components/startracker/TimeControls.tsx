@@ -107,7 +107,7 @@ export function TimeControls() {
       <div className="flex md:hidden items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-950/80 px-2.5 py-1.5 backdrop-blur w-full">
         <div className="flex items-center gap-1.5 min-w-0">
           <Clock className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden />
-          <span className="font-mono text-xs text-slate-100 truncate">{tzTimeString}</span>
+          <span className="font-mono text-xs text-slate-100 truncate" suppressHydrationWarning>{tzTimeString}</span>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -153,7 +153,7 @@ export function TimeControls() {
         {/* Live date / time (observer tz) */}
         <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1.5">
           <Clock className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden />
-          <span className="font-mono text-xs text-slate-100">{tzTimeString}</span>
+          <span className="font-mono text-xs text-slate-100" suppressHydrationWarning>{tzTimeString}</span>
           <span className="text-[10px] text-slate-500">{observer.timezone}</span>
         </div>
 

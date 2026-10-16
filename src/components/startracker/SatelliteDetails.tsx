@@ -72,8 +72,19 @@ export function SatelliteDetails() {
             <div className="font-semibold text-slate-100">
               {data.name}
             </div>
-            <div className="text-[11px] text-slate-500">
-              Artificial Satellite · NORAD {data.id}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-500">
+                Artificial Satellite · NORAD {data.id}
+              </span>
+              {data.altDeg >= 0 ? (
+                <span className="inline-flex items-center rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium text-emerald-300 border border-emerald-500/30">
+                  Visible in Sky
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-300 border border-amber-500/20">
+                  Below Horizon
+                </span>
+              )}
             </div>
           </div>
         </div>
